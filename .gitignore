@@ -1,0 +1,61 @@
+# ---------- 环境与密钥 ----------
+.env
+.env.local
+backed/.env
+backed/.env.*.local
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ---------- 数据库与运行期数据 ----------
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+backed/data/app.db
+backed/cache/
+
+# ---------- 前端 ----------
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+# npm 缓存（沙箱下需重定向到工作区，勿提交）
+.npm-cache/
+# 本地工具缓存（如 Electron 安装包，约 150MB）
+tools/.cache/
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# 早期废弃的 Java/Spring 骨架（最终项目是 backed/ + fronted/）：
+# 含 19.4MB 构建产物 jar、.idea/ 配置和一个硬编码密钥，整体不纳入仓库
+back/
+
+# 技术文档排版调参的中间产物（试排 draft + 逐版渲染图，约 21MB）
+docs/_work/
+# 城市 POI 语料 CSV（抓取自去哪儿网 travel.qunar.com，版权归原站）
+# **刻意不随仓库分发**：仓库只提供转换脚本 backed/scripts/import_citydata.py，
+# 需要知识库数据时自行把 CSV 放到 data/citydata/ 再运行该脚本。
+data/citydata/
+# pip ��װ��ʱĿ¼������ʱ��������Ȩ�޶�ȡ��ˢ���棩
+backed/.piptmp/
+**/.piptmp/
+
+# ��ʱ���Բ���
+backed/_test_guide.png
+
+# ���� IDE �����뿪�������ű�������ֿ�ַ���
+.trae/
+tools/install_electron.py
