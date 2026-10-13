@@ -1,0 +1,89 @@
+{
+  "_comment": "城市配置表。adcode 用于高德天气 API，center_lat/lng 用于 POI 搜索中心点，keywords 是搜索关键词列表。",
+  "cities": [
+    {
+      "name": "北京",
+      "adcode": "110000",
+      "center_lat": 39.9042,
+      "center_lng": 116.4074,
+      "keywords": ["景点", "美食", "博物馆", "公园", "购物中心"]
+    },
+    {
+      "name": "上海",
+      "adcode": "310000",
+      "center_lat": 31.2304,
+      "center_lng": 121.4737,
+      "keywords": ["景点", "美食", "博物馆", "公园", "购物中心"]
+    },
+    {
+      "name": "杭州",
+      "adcode": "330100",
+      "center_lat": 30.2741,
+      "center_lng": 120.1551,
+      "keywords": ["景点", "美食", "博物馆", "公园", "购物中心"]
+    },
+    {
+      "name": "南京",
+      "adcode": "320100",
+      "center_lat": 32.0603,
+      "center_lng": 118.7969,
+      "keywords": ["景点", "美食", "博物馆", "公园", "购物中心"]
+    },
+    {
+      "name": "苏州",
+      "adcode": "320500",
+      "center_lat": 31.2989,
+      "center_lng": 120.5853,
+      "keywords": ["景点", "美食", "博物馆", "园林", "购物中心"]
+    },
+    {
+      "name": "成都",
+      "adcode": "510100",
+      "center_lat": 30.5728,
+      "center_lng": 104.0668,
+      "keywords": ["景点", "美食", "博物馆", "公园", "购物中心"]
+    },
+    {
+      "name": "西安",
+      "adcode": "610100",
+      "center_lat": 34.3416,
+      "center_lng": 108.9398,
+      "keywords": ["景点", "美食", "博物馆", "古迹", "购物中心"]
+    },
+    {
+      "name": "重庆",
+      "adcode": "500000",
+      "center_lat": 29.5630,
+      "center_lng": 106.5516,
+      "keywords": ["景点", "美食", "公园", "购物中心"]
+    },
+    {
+      "name": "厦门",
+      "adcode": "350200",
+      "center_lat": 24.4798,
+      "center_lng": 118.0894,
+      "keywords": ["景点", "美食", "海滩", "公园", "购物中心"]
+    },
+    {
+      "name": "青岛",
+      "adcode": "370200",
+      "center_lat": 36.0671,
+      "center_lng": 120.3826,
+      "keywords": ["景点", "美食", "海滩", "公园", "购物中心"]
+    },
+    {
+      "name": "大理",
+      "adcode": "532901",
+      "center_lat": 25.6065,
+      "center_lng": 100.2679,
+      "keywords": ["景点", "美食", "古迹", "公园"]
+    },
+    {
+      "name": "丽江",
+      "adcode": "530700",
+      "center_lat": 26.8721,
+      "center_lng": 100.2299,
+      "keywords": ["景点", "美食", "古迹", "公园"]
+    }
+  ]
+}

@@ -59,3 +59,7 @@ backed/_test_guide.png
 # 本地 IDE 规则与开发辅助脚本（不随仓库分发）
 .trae/
 tools/install_electron.py
+
+# 数据库备份与一次性代码生成脚本（不入库）
+backed/data/*.bak*
+fronted/travel/write_home.js

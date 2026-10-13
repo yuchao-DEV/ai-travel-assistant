@@ -1,0 +1,62 @@
+{
+  "_comment": "高德 POI typecode → {tags, indoor} 映射表。tags 从 历史/自然/美食/购物/艺术/夜生活 中选。indoor=true 表示室内（雨天可去）。",
+  "_fallback_rules": {
+    "indoor_keywords": ["博物馆", "美术馆", "商场", "购物中心", "剧院", "影院", "图书馆", "展览馆", "科技馆", "水族馆", "海洋馆", "室内"],
+    "outdoor_keywords": ["公园", "广场", "山", "湖", "海滩", "海滨", "湿地", "景区", "风景区", "古迹", "遗址", "寺", "塔", "桥", "广场"]
+  },
+
+  "110000": {"tags": ["自然", "历史"], "indoor": false},
+  "110100": {"tags": ["自然"], "indoor": false},
+  "110200": {"tags": ["历史", "自然"], "indoor": false},
+  "110300": {"tags": ["历史", "艺术"], "indoor": true},
+  "110400": {"tags": ["艺术"], "indoor": true},
+  "110500": {"tags": ["自然"], "indoor": false},
+  "110600": {"tags": ["历史"], "indoor": false},
+  "110700": {"tags": ["历史"], "indoor": false},
+  "110900": {"tags": ["自然"], "indoor": false},
+  "111000": {"tags": ["自然"], "indoor": false},
+  "111100": {"tags": ["自然"], "indoor": false},
+  "111200": {"tags": ["自然"], "indoor": false},
+
+  "050000": {"tags": ["美食"], "indoor": true},
+  "050100": {"tags": ["美食"], "indoor": true},
+  "050200": {"tags": ["美食"], "indoor": true},
+  "050300": {"tags": ["美食"], "indoor": true},
+  "050400": {"tags": ["美食"], "indoor": true},
+  "050500": {"tags": ["美食"], "indoor": true},
+  "050600": {"tags": ["美食"], "indoor": true},
+  "050700": {"tags": ["美食", "夜生活"], "indoor": true},
+  "050900": {"tags": ["美食"], "indoor": true},
+
+  "060000": {"tags": ["购物"], "indoor": true},
+  "060100": {"tags": ["购物"], "indoor": true},
+  "060200": {"tags": ["购物"], "indoor": true},
+  "060300": {"tags": ["购物"], "indoor": true},
+  "060400": {"tags": ["购物"], "indoor": true},
+  "060500": {"tags": ["购物", "艺术"], "indoor": true},
+  "060600": {"tags": ["购物"], "indoor": true},
+  "060700": {"tags": ["购物"], "indoor": true},
+  "060800": {"tags": ["购物"], "indoor": true},
+  "060900": {"tags": ["购物"], "indoor": true},
+
+  "080000": {"tags": ["艺术", "夜生活"], "indoor": true},
+  "080100": {"tags": ["艺术"], "indoor": true},
+  "080200": {"tags": ["自然"], "indoor": false},
+  "080300": {"tags": ["艺术"], "indoor": true},
+  "080400": {"tags": ["夜生活"], "indoor": true},
+  "080500": {"tags": ["夜生活"], "indoor": true},
+  "080600": {"tags": ["夜生活"], "indoor": true},
+  "080700": {"tags": ["自然"], "indoor": false},
+  "080900": {"tags": ["艺术"], "indoor": true},
+
+  "140000": {"tags": ["历史", "艺术"], "indoor": true},
+  "140100": {"tags": ["历史"], "indoor": true},
+  "140300": {"tags": ["艺术"], "indoor": true},
+  "140400": {"tags": ["艺术"], "indoor": true},
+  "140500": {"tags": ["历史", "艺术"], "indoor": true},
+  "140600": {"tags": ["艺术"], "indoor": true},
+  "140700": {"tags": ["艺术"], "indoor": true},
+  "140800": {"tags": ["艺术"], "indoor": true},
+
+  "100000": {"tags": [], "indoor": true}
+}
