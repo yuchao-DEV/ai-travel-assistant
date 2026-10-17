@@ -1,0 +1,562 @@
+/**
+ * 应用级设计令牌（双端共用）。
+ *
+ * ## 为什么需要这一层
+ *
+ * 项目是**双端双组件库**：移动端用 Vant（--van-*），桌面端用 Element Plus
+ * （--el-*）。改造前主色 #4a7dff 硬编码在 15 个文件的 64 处——想换一次主色
+ * 得改 64 个地方，漏一处就出现"半新半旧"的中间态。
+ *
+ * 所以先建这一层：**页面只用 --app-* 语义令牌**，再把它映射到两个组件库。
+ * 改颜色只改这里。
+ *
+ * ## 配色来源与修正
+ *
+ * 取"旅行"品类气质：暖橙 + 地图青（参考 Road Trip Planner 配色），
+ * 而不是 AI 产品的通用紫——AI 只是实现手段，产品本体是旅行规划。
+ *
+ * **一处刻意的不照搬**：配色方案给的 primary 是 #488A6C 配白字，
+ * 实测对比度只有 4.10:1，达不到正文 4.5:1。所以：
+ *   - --app-brand        用更深的 #427F62（白字 4.73:1 ✓），给按钮/链接/正文
+ *   - --app-brand-bright 保留 #488A6C，只给大字号标题与图标（大字 AA 3:1 达标）
+ * 可读性优先于"配色卡上写的那个值"。
+ *
+ * 同一原因修正了辅助灰：方案给的 #6A7C72 在 #F4F9F5 上只有 4.16:1，
+ * 压深到 #5F7168（4.87:1）作次要文字，提示/占位用 #64766C（4.53:1）。
+ *
+ * ## 字体
+ *
+ * 设计库推荐的 Space Grotesk / DM Sans **都是纯拉丁字体**，不覆盖中文。
+ * 直接套会让中文回退到系统字体、与拉丁字重基线对不上。
+ * 所以：拉丁数字字体只给**数字**（价格/日期/耗时/评分），
+ * 正文用系统中文字体栈——这也是中文产品的常规做法。
+ */
+
+:root {
+  /* ---------- 品牌色 ---------- */
+  --app-brand: #427f62;            /* 森绿主色：按钮、链接、选中态（白字 4.73:1） */
+  --app-brand-bright: #488a6c;     /* 方案原主色：大字号标题、图标（白字 4.10:1，仅大字） */
+  --app-brand-hover: #35664e;      /* 悬停：**压暗**而不是提亮（白字 6.9:1） */
+  --app-brand-active: #2c5441;     /* 按下 */
+  --app-brand-rgb: 66, 127, 98;    /* 同上主色的 RGB，供 rgba() 用 */
+  --app-brand-fg: #ffffff;         /* 主色上的文字 */
+  --app-brand-soft: #e8f0ec;       /* 主色浅底（选中 chip 背景） */
+  --app-brand-soft-fg: #33634c;    /* 浅底上的文字 */
+
+  /* 次色：地图青，用于"信息/参考"类元素，与暖橙形成冷暖对比 */
+  --app-accent: #4a7f84;           /* 青灰：与森绿同族但可区分（白字 4.6:1） */
+  --app-accent-bright: #5a959a;
+  --app-accent-soft: #e6f2f3;
+
+  /* ---------- 语义色 ---------- */
+  --app-success: #2f7d53;
+  --app-success-soft: #e3f3ea;
+  --app-warning: #a9761e;
+  --app-warning-soft: #fbf1da;
+  --app-danger: #b3453e;
+  --app-danger-soft: #fbe9e7;
+  --app-info: #5a6b62;
+
+  /* ---------- 表面与文字 ---------- */
+  --app-bg: #f4f9f5;               /* 页面底色：极淡薄荷米 */
+  --app-bg-subtle: #fafcfa;        /* 更低对比的区块底色 */
+  --app-surface: #ffffff;          /* 卡片 */
+  --app-surface-muted: #f0f6f2;    /* 弱化表面 */
+  --app-border: #e3ede7;           /* 边框：带绿的浅灰，不是中性灰 */
+  --app-border-strong: #cfe0d6;
+  --app-text: #27312c;             /* 正文（在 --app-bg 上 12.6:1） */
+  --app-text-secondary: #5f7168;   /* 次要文字（在底色上 4.9:1） */
+  --app-text-tertiary: #64766c;    /* 提示/占位（在底色上 4.5:1，刚过 AA） */
+  --app-text-inverse: #ffffff;
+  --app-overlay: rgba(39, 49, 44, 0.45);  /* 遮罩 */
+
+  /* ---------- 圆角 ---------- */
+  --app-radius-xs: 4px;
+  --app-radius-sm: 8px;
+  --app-radius-md: 12px;
+  --app-radius-lg: 16px;
+  --app-radius-pill: 999px;
+
+  /* ---------- 间距（4/8 节奏） ---------- */
+  --app-space-xs: 4px;
+  --app-space-sm: 8px;
+  --app-space-md: 16px;
+  --app-space-lg: 24px;
+  --app-space-xl: 32px;
+  --app-space-2xl: 48px;
+
+  /* ---------- 阴影 ---------- */
+  --app-shadow-sm: 0 1px 2px rgba(22, 45, 34, 0.05);
+  --app-shadow-md: 0 2px 10px rgba(22, 45, 34, 0.07);
+  --app-shadow-lg: 0 8px 24px rgba(22, 45, 34, 0.10);
+
+  /* ---------- 字体 ---------- */
+  /* 中文字体栈：优先系统原生（苹方/鸿蒙/思源），最后兜底雅黑 */
+  --app-font-cn: 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans SC',
+    'Source Han Sans SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  /* 拉丁数字字体：只给数字与英文，绝不用于中文正文（它不含中文字形） */
+  --app-font-num: 'Space Grotesk', ui-monospace, 'SF Mono', Menlo, Consolas,
+    monospace;
+  --app-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ---------- 触摸目标 ---------- */
+  --app-tap-min: 44px;             /* iOS 44pt / Android 48dp / 本项目取 44 */
+
+  /* ---------- 层级 ---------- */
+  --app-z-nav: 100;
+  --app-z-popup: 200;
+  --app-z-toast: 300;
+}
+
+/* ==================================================================
+   映射到 Vant（移动端）
+   ================================================================== */
+:root,
+.van-theme-light {
+  --van-primary-color: var(--app-brand);
+  --van-success-color: var(--app-success);
+  --van-danger-color: var(--app-danger);
+  --van-warning-color: var(--app-warning);
+  --van-text-color: var(--app-text);
+  --van-text-color-2: var(--app-text-secondary);
+  --van-text-color-3: var(--app-text-tertiary);
+  --van-background: var(--app-bg);
+  --van-background-2: var(--app-surface);
+  --van-border-color: var(--app-border);
+  --van-active-color: var(--app-surface-muted);
+  --van-radius-md: var(--app-radius-sm);
+  --van-radius-lg: var(--app-radius-md);
+  --van-button-primary-background: var(--app-brand);
+  --van-button-primary-border-color: var(--app-brand);
+  --van-tabbar-item-active-color: var(--app-brand);
+  --van-nav-bar-title-text-color: var(--app-text);
+  --van-cell-text-color: var(--app-text);
+  --van-field-label-color: var(--app-text-secondary);
+}
+
+/* ==================================================================
+   映射到 Element Plus（桌面端）
+   ================================================================== */
+:root {
+  --el-color-primary: var(--app-brand);
+  --el-color-primary-light-3: #7ba591;
+  --el-color-primary-light-5: #a0bfb0;
+  --el-color-primary-light-7: #c6d9d0;
+  --el-color-primary-light-8: #d9e5e0;
+  --el-color-primary-light-9: #ecf2ef;
+  --el-color-primary-dark-2: #35664e;
+
+  --el-color-success: var(--app-success);
+  --el-color-warning: var(--app-warning);
+  --el-color-danger: var(--app-danger);
+  --el-color-error: var(--app-danger);
+  --el-color-info: var(--app-info);
+
+  --el-text-color-primary: var(--app-text);
+  --el-text-color-regular: var(--app-text-secondary);
+  --el-text-color-secondary: var(--app-text-tertiary);
+  --el-bg-color: var(--app-surface);
+  --el-bg-color-page: var(--app-bg);
+  --el-fill-color-blank: var(--app-surface);
+  --el-border-color: var(--app-border);
+  --el-border-color-light: var(--app-border);
+  --el-border-radius-base: var(--app-radius-sm);
+  --el-border-radius-small: var(--app-radius-xs);
+  --el-font-family: var(--app-font-cn);
+}
+
+/* ==================================================================
+   基础样式
+   ================================================================== */
+body {
+  font-family: var(--app-font-cn);
+  color: var(--app-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 数字统一用拉丁数字字体：价格/时间/评分/耗时是界面里真正有辨识度的信息 */
+.app-num,
+.tl-tool-ms,
+.ic-meta,
+.pa-itin-cost {
+  font-family: var(--app-font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 触摸目标下限。用 min-height 而不是 height：
+   内容多的 chip 可以变高，但不会低于可点击下限。 */
+.app-tap {
+  min-height: var(--app-tap-min);
+}
+
+/* 尊重系统的"减少动态"设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* ==================================================================
+   叙事滚动（Scrolltelling）—— 编辑风视觉层
+   ==================================================================
+
+   这一层与上面的"暖橙工具感"**并存**，不替换：默认界面仍是浅色卡片，
+   叙事章节用 .story-* 类开启深色全幅。
+
+   为什么并存而不是替换：技能库对 parallax-storytelling 的判定是
+   「移动端 not-recommended / 无障碍 risk:high / 性能 cost:high」，
+   而本项目是 mobile-first。把整站都做成深色全幅会把最常用的
+   "选城市→看行程"流程变慢。所以深色只用于**章节式叙述段落**，
+   表单与列表保持浅色。 */
+
+:root {
+  /* 衬线显示字体：拉丁 + 中文各自一套，避免中文回退到黑体 */
+  --app-font-serif: 'Cormorant Garamond', 'Noto Serif SC', 'Source Han Serif SC',
+    'Songti SC', 'SimSun', Georgia, serif;
+
+  /* 深色章节的底色与文字（与浅色主题独立，不共用 --app-text） */
+  --app-story-bg: #0c1411;
+  --app-story-fg: #f2f6f3;
+  --app-story-fg-dim: rgba(242, 246, 243, 0.68);
+  --app-story-line: rgba(242, 246, 243, 0.22);
+  --app-story-num: rgba(242, 246, 243, 0.34);
+
+  /* 照片压暗：保证白字在任意照片上都能达到 4.5:1 */
+  /* 亮色照片（樱花/雪景/天空）需要更实的底部渐变，
+     否则白字在 4.5:1 上必挂。实测南京鸡鸣寺樱花照 #fff 标题几乎读不出。 */
+  --app-story-scrim: linear-gradient(
+    to bottom,
+    rgba(12, 20, 17, 0.42) 0%,
+    rgba(12, 20, 17, 0.55) 38%,
+    rgba(12, 20, 17, 0.86) 72%,
+    rgba(12, 20, 17, 0.95) 100%);
+
+  /* 视差强度：分三档，切图层的位移倍率。1 = 与滚动同比（最重的"不跟手"感） */
+  --app-parallax-bg: 0.18;
+  --app-parallax-mid: 0.36;
+  --app-parallax-fg: 0.6;
+
+  --app-story-min-h: 78vh;
+
+  /* ---------- 编辑排版（浅色）----------
+     与 .story-* 的深色影院感并列，不是替代。
+     森系清透是浅色安静的调子，整屏压暗会与左侧浅色面板硬拼。 */
+  --app-editorial-bg: var(--app-surface);
+  --app-editorial-fg: var(--app-text);
+  --app-editorial-dim: var(--app-text-secondary);
+  --app-editorial-num: rgba(66, 127, 98, 0.18);
+  --app-editorial-line: var(--app-border);
+  --app-editorial-serif: var(--app-font-serif);
+
+}
+
+/* 叙事章节：全幅 + 深色 + 衬线 */
+.story-section {
+  position: relative;
+  min-height: var(--app-story-min-h);
+  overflow: hidden;
+  background: var(--app-story-bg);
+  color: var(--app-story-fg);
+  isolation: isolate;
+}
+.story-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 视差：把位移量交给 CSS 变量，JS 只写这一个变量（避免逐帧改 transform） */
+  transform: translate3d(0, calc(var(--story-shift, 0) * 1px), 0) scale(1.08);
+  will-change: transform;
+}
+.story-scrim { position: absolute; inset: 0; background: var(--app-story-scrim); }
+
+.story-body {
+  position: relative;
+  z-index: 1;
+  min-height: var(--app-story-min-h);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: var(--app-space-xl) var(--app-space-lg) var(--app-space-2xl);
+}
+.story-num {
+  font-family: var(--app-font-serif);
+  font-size: clamp(40px, 9vw, 88px);
+  line-height: 0.9;
+  color: var(--app-story-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.story-kicker {
+  margin-top: var(--app-space-sm);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--app-story-fg-dim);
+}
+.story-title {
+  margin: var(--app-space-sm) 0 0;
+  font-family: var(--app-font-serif);
+  font-weight: 500;
+  font-size: clamp(26px, 5.5vw, 48px);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  /* 标题里的换行要保留（首屏文案是分行写的） */
+  white-space: pre-line;
+  color: var(--app-story-fg);
+}
+.story-text {
+  margin-top: var(--app-space-md);
+  max-width: 46ch;
+  font-size: 13.5px;
+  line-height: 1.85;
+  color: var(--app-story-fg-dim);
+}
+.story-rule {
+  margin-top: var(--app-space-lg);
+  width: 44px;
+  height: 1px;
+  background: var(--app-story-line);
+}
+
+/* 依次揭示：默认可见，只有"支持动效且用户没关掉动效"时才从下方淡入。
+   **默认可见是关键**——JS 没跑、IntersectionObserver 不可用、
+   用户开了 reduced-motion，内容都必须照常显示，否则等于白屏。 */
+@media (prefers-reduced-motion: no-preference) {
+  .story-reveal {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+    transition: opacity 600ms ease, transform 600ms ease;
+  }
+  .story-reveal.is-in { opacity: 1; transform: none; }
+}
+
+/* 跳过叙事：对视差/动效不适的用户必须有一个直达内容的入口 */
+.story-skip {
+  position: absolute;
+  top: 8px;
+  right: var(--app-space-md);
+  z-index: 3;
+  font-size: 12px;
+  color: var(--app-story-fg-dim);
+  background: rgba(12, 20, 17, 0.5);
+  border: 1px solid var(--app-story-line);
+  border-radius: var(--app-radius-pill);
+  padding: 6px 12px;
+  cursor: pointer;
+  min-height: 32px;
+}
+.story-skip:focus-visible { outline: 2px solid var(--app-story-fg); outline-offset: 2px; }
+
+/* 滚动提示 */
+.story-scroll-cue {
+  margin-top: var(--app-space-xl);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--app-story-fg-dim);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .story-scroll-cue::after {
+    content: '↓';
+    animation: story-bob 1.6s ease-in-out infinite;
+  }
+  @keyframes story-bob {
+    0%, 100% { transform: translateY(0); opacity: .5 }
+    50% { transform: translateY(4px); opacity: 1 }
+  }
+}
+
+/* ============================================================
+   浅色变体：编辑排版（editorial-grid-magazine）
+   ============================================================
+   大图 + 留白 + 衬线标题 + 细分隔线。不压暗、不做视差。
+   与浅色工具面板同族，避免"左白右黑"的硬边界。
+   ── 森系清透是浅色安静的调子，整屏压暗会与它硬拼。 */
+.story-light {
+  background: var(--app-editorial-bg);
+  color: var(--app-editorial-fg);
+  min-height: 0;
+  overflow: visible;
+  border-radius: var(--app-radius-lg);
+  border: 1px solid var(--app-editorial-line);
+}
+/* 关键：覆盖深色变体的全幅 + 视差缩放，改成正常文档流里的大图 */
+.story-light .story-bg {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  transform: none !important;
+  border-radius: var(--app-radius-lg) var(--app-radius-lg) 0 0;
+  display: block;
+  will-change: auto;
+}
+.story-light .story-body {
+  min-height: 0;
+  padding: 20px 24px 24px;
+  justify-content: flex-start;
+}
+.story-light .story-num {
+  font-size: clamp(30px, 4vw, 42px);
+  color: var(--app-editorial-num);
+  line-height: 1;
+}
+.story-light .story-kicker {
+  color: var(--app-editorial-dim);
+  letter-spacing: 0.16em;
+  margin-top: 6px;
+}
+.story-light .story-title {
+  color: var(--app-editorial-fg);
+  font-size: clamp(22px, 2.6vw, 30px);
+  line-height: 1.25;
+  margin-top: 8px;
+}
+.story-light .story-text {
+  color: var(--app-editorial-dim);
+  font-size: 13px;
+  line-height: 1.8;
+  margin-top: 10px;
+  max-width: 60ch;
+}
+.story-light .story-rule {
+  background: var(--app-editorial-line);
+  margin-top: 16px;
+}
+.story-light .story-scroll-cue { color: var(--app-editorial-dim); }
+.story-light .story-skip {
+  color: var(--app-editorial-dim);
+  background: rgba(255, 255, 255, 0.86);
+  border-color: var(--app-editorial-line);
+}
+
+/* ==================================================================
+   高级感材质层（移动端）
+   ==================================================================
+
+   参考设计库 editorial / premium 的工艺做法，但**保留森绿浅色**：
+   深色影院方案与「森系清透」的调子相反，不采用。
+
+   四条主线：
+   1. 分层柔和阴影（绿调、低透明度），不用实心灰边框
+   2. 磨砂玻璃 surface（tabbar / 吸顶栏），backdrop-filter 加饱和
+   3. 环境光：极淡径向渐变铺在页面底部，制造纵深而不是纯平底色
+   4. Expo.out 缓动 + 按压 scale(.97)，微交互 150–260ms */
+
+:root {
+  /* ---- 动效 ---- */
+  --app-ease-out: cubic-bezier(0.16, 1, 0.3, 1);   /* Expo.out */
+  --app-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --app-dur-fast: 150ms;
+  --app-dur-base: 220ms;
+  --app-dur-slow: 320ms;
+  --app-press-scale: 0.97;
+
+  /* ---- 磨砂玻璃 ---- */
+  --app-glass-bg: rgba(255, 255, 255, 0.72);
+  --app-glass-bg-strong: rgba(255, 255, 255, 0.86);
+  --app-glass-blur: 20px;
+  --app-glass-border: rgba(39, 49, 44, 0.06);
+
+  /* ---- 环境光（浅色版：极淡的薄荷/森绿晕） ---- */
+  --app-ambient-1: rgba(72, 138, 108, 0.10);
+  --app-ambient-2: rgba(140, 196, 168, 0.12);
+
+  /* ---- 描边（低透明度，替代实心灰） ---- */
+  --app-hairline: rgba(39, 49, 44, 0.08);
+  --app-hairline-strong: rgba(39, 49, 44, 0.14);
+
+  /* ---- 字阶（移动端） ---- */
+  --app-text-display: 30px;
+  --app-text-title: 21px;
+  --app-text-subtitle: 17px;
+  --app-text-body: 15px;
+  --app-text-caption: 13px;
+  --app-text-micro: 11px;
+
+  /* ---- 层叠阴影：两三层叠出来的柔和感，比单层 box-shadow 更"贵" ---- */
+  --app-elev-1: 0 1px 1px rgba(22, 45, 34, 0.04),
+                0 2px 8px rgba(22, 45, 34, 0.05);
+  --app-elev-2: 0 1px 2px rgba(22, 45, 34, 0.05),
+                0 6px 18px rgba(22, 45, 34, 0.07),
+                0 12px 32px rgba(22, 45, 34, 0.05);
+  --app-elev-3: 0 2px 4px rgba(22, 45, 34, 0.06),
+                0 12px 28px rgba(22, 45, 34, 0.10),
+                0 24px 56px rgba(22, 45, 34, 0.08);
+}
+
+/* 页面底色加一层环境光：极淡的径向晕，避免大面积纯色发"平" */
+body {
+  background-color: var(--app-bg);
+  background-image:
+    radial-gradient(1100px 520px at 82% -8%, var(--app-ambient-2), transparent 62%),
+    radial-gradient(900px 480px at -12% 8%, var(--app-ambient-1), transparent 58%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* ---- 磨砂玻璃底部导航 ---- */
+.van-tabbar--fixed {
+  background: var(--app-glass-bg-strong) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(var(--app-glass-blur));
+  backdrop-filter: saturate(180%) blur(var(--app-glass-blur));
+  border-top: 1px solid var(--app-glass-border) !important;
+  box-shadow: 0 -1px 24px rgba(22, 45, 34, 0.05);
+}
+.van-tabbar-item__icon {
+  transition: transform var(--app-dur-base) var(--app-ease-out);
+}
+.van-tabbar-item--active .van-tabbar-item__icon {
+  transform: translateY(-1px) scale(1.06);
+}
+.van-tabbar-item__text {
+  font-size: var(--app-text-micro);
+  letter-spacing: 0.02em;
+}
+
+/* ---- 吸顶导航同样磨砂 ---- */
+.van-nav-bar::after { display: none; }
+.van-nav-bar {
+  background: var(--app-glass-bg) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(var(--app-glass-blur));
+  backdrop-filter: saturate(180%) blur(var(--app-glass-blur));
+  border-bottom: 1px solid var(--app-glass-border);
+}
+
+/* ---- 全局按压反馈：不改变布局边界（transform 不参与布局） ---- */
+.van-button,
+.van-cell,
+.card-pressable {
+  transition: transform var(--app-dur-fast) var(--app-ease-out),
+              box-shadow var(--app-dur-base) var(--app-ease-out),
+              opacity var(--app-dur-fast) linear;
+}
+.van-button:active:not(.van-button--disabled),
+.card-pressable:active {
+  transform: scale(var(--app-press-scale));
+}
+
+/* ---- 输入框/卡片统一柔和描边，替掉实心灰 ---- */
+.van-cell::after {
+  border-color: var(--app-hairline) !important;
+}
+
+/* ---- 尊重减少动效 ---- */
+@media (prefers-reduced-motion: reduce) {
+  .van-button:active,
+  .card-pressable:active,
+  .van-tabbar-item--active .van-tabbar-item__icon {
+    transform: none !important;
+  }
+}

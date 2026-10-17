@@ -1,0 +1,118 @@
+/* 桌面端全局样式：与移动端主色保持一致（蓝紫渐变 var(--app-brand) → var(--app-brand-hover)） */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#pc-app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+:root {
+  --pc-primary: var(--app-brand);
+  --pc-primary-deep: var(--app-brand-active);
+  --pc-gradient: linear-gradient(135deg, var(--app-brand) 0%, var(--app-brand-hover) 100%);
+  --pc-radius: 10px;
+  --pc-card-shadow: 0 2px 12px rgba(31, 45, 61, 0.06);
+}
+
+/* Element Plus 主色对齐项目蓝紫主色 */
+.el-button--primary {
+  --el-button-bg-color: var(--pc-primary);
+  --el-button-border-color: var(--pc-primary);
+  --el-button-hover-bg-color: var(--app-brand-hover);
+  --el-button-hover-border-color: var(--app-brand-hover);
+  --el-button-active-bg-color: var(--pc-primary-deep);
+  --el-button-active-border-color: var(--pc-primary-deep);
+}
+
+.el-tabs__item.is-active {
+  color: var(--pc-primary);
+}
+
+.el-tabs__active-bar {
+  background-color: var(--pc-primary);
+}
+
+.pc-card {
+  background: var(--app-surface);
+  border-radius: var(--pc-radius);
+  box-shadow: var(--pc-card-shadow);
+  padding: 20px;
+}
+
+.pc-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pc-muted {
+  color: var(--app-text-secondary);
+  font-size: 13px;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--app-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-text-secondary);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* ==================== 桌面端点击目标 ====================
+   桌面不需要 44pt（那是 iOS/Android 触摸标准）。Web 的 WCAG 2.5.8
+   下限是 24×24 CSS px，实测标签/单选按钮 30px 已达标；
+   这里提到 36px 是为了鼠标点击更从容，不是为了凑触摸尺寸。 */
+.el-checkbox-button__inner,
+.el-radio-button__inner {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+.plan-btn { min-height: 40px; }
+
+/* ==================================================================
+   桌面端材质层（与移动端 tokens.css 的高级感层对齐）
+   ================================================================== */
+:root {
+  --pc-glass-bg: rgba(255, 255, 255, 0.72);
+  --pc-glass-blur: 20px;
+}
+
+/* 顶部导航磨砂：滚动时内容从下面透出来，层次感立刻不同 */
+.pc-header,
+.top-nav {
+  background: var(--pc-glass-bg) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(var(--pc-glass-blur));
+  backdrop-filter: saturate(180%) blur(var(--pc-glass-blur));
+  border-bottom: 1px solid var(--app-hairline) !important;
+}
+
+/* 卡片统一分层阴影，替掉实心灰描边 */
+.pc-card {
+  border: 1px solid var(--app-hairline);
+  box-shadow: var(--app-elev-1);
+  border-radius: var(--app-radius-lg);
+}
