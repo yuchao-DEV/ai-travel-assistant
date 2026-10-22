@@ -319,6 +319,9 @@ const onImportImageChange = async (e) => {
   try {
     const res = await importImage(file, formData.city || '')
     applyImportData(res && res.data ? res.data : null)
+    // 必须弹出核对层：哪些地点存在、哪些没匹配、为什么，都在里面。
+    // 只弹一个"提取到 N 个地点"的 toast，用户没法确认要加入哪些。
+    if (res && res.data) showImport.value = true
     const n = (res?.data?.image_places || []).length
     if (n) showToast(`从图片里提取到 ${n} 个地点`)
   } catch (err) {
@@ -473,6 +476,27 @@ watch(isLoggedIn, () => {
           <van-button v-if="nlText || parseResult" size="small" round plain @click="clearParse">
             清空
           </van-button>
+          <!-- 图片识别入口：它和"说一句话"是同一件事的两条输入路径
+               （说一句 / 传张攻略图），放在一起用户不用先去点「导入」找。
+               上传后自动弹出核对层，让用户勾选要加入的地点。 -->
+          <van-button
+            size="small"
+            round
+            plain
+            icon="photo-o"
+            :disabled="importing"
+            :loading="importing"
+            @click="pickImportImage"
+          >
+            上传攻略图
+          </van-button>
+          <input
+            ref="importImageEl"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            class="import-image-input"
+            @change="onImportImageChange"
+          />
           <!-- 入口：一句话规划是"解析后回填表单"，和 AI 助手直接对话是两回事，
                放在一起让用户知道还有另一种更省事的用法 -->
           <van-button size="small" round plain icon="chat-o" @click="$router.push('/agent')">
@@ -666,29 +690,6 @@ watch(isLoggedIn, () => {
             maxlength="6000"
             placeholder="例如：D1 上午去拙政园，中午在平江路吃饭，下午逛苏州博物馆，晚上到山塘街看夜景"
           ></textarea>
-
-          <!-- 攻略图导入：与粘贴文字走同一条后端管线，结果渲染完全一致 -->
-          <div class="import-image-bar">
-            <input
-              ref="importImageEl"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              class="import-image-input"
-              @change="onImportImageChange"
-            />
-            <van-button
-              size="small"
-              round
-              plain
-              type="primary"
-              :disabled="importing"
-              @click="pickImportImage"
-            >
-              上传攻略图
-            </van-button>
-            <span v-if="importImageName" class="import-image-name">{{ importImageName }}</span>
-            <span v-else class="import-image-hint">JPG / PNG / WebP，≤8MB</span>
-          </div>
 
           <div class="import-actions">
             <van-button type="primary" round block :loading="importing" @click="runImport">

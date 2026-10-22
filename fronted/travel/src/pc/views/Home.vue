@@ -111,8 +111,8 @@ const timeKey = computed(() => {
   return hit ? hit.label : ''
 })
 
-function onTimeChange(label) {
-  const opt = timeOptions.value.find(o => o.label === label)
+/** 点一下选中，再点一下取消。绑在按钮的 click 上（见模板注释）。 */
+function toggleTime(opt) {
   if (!opt) return
   const active = form.day_start === opt.start && form.day_end === opt.end
   form.day_start = active ? '' : opt.start
@@ -302,6 +302,10 @@ async function onImportImageChange(e) {
   try {
     const res = await importImage(file, form.city || '')
     applyImportData(res && res.data ? res.data : null)
+    // 必须打开对话框：核对结果（哪些存在、哪些没匹配、为什么）都在里面。
+    // 只弹一个"提取到 N 个地点"的 toast，用户没法确认要加入哪些，
+    // 也看不到"八市 → 不是可游览地点"这类原因。
+    if (res && res.data) showImport.value = true
     const n = (res?.data?.image_places || []).length
     if (n) ElMessage.success(`从图片里提取到 ${n} 个地点`)
   } catch (err) {
@@ -461,9 +465,30 @@ watch(isLoggedIn, () => {
           >
             清空
           </el-button>
+          <!-- 图片识别入口放在这里：它和"一句话规划"是同一件事的两条输入路径
+               （说一句 / 传张攻略图），放在一起用户不用去找。
+               上传后直接走 /api/import/image，识别出的地点回填到必去列表。 -->
+          <el-button
+            :loading="importing"
+            :icon="Picture"
+            :disabled="importing"
+            @click="pickImportImage"
+          >
+            上传攻略图
+          </el-button>
           <el-button :icon="ChatDotRound" @click="router.push('/agent')">
             和 AI 助手聊
           </el-button>
+          <input
+            ref="importImageEl"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            class="hidden-file"
+            @change="onImportImageChange"
+          />
+          <span v-if="importImageName" class="pc-muted nl-tip">
+            {{ importImageName }}
+          </span>
           <span class="pc-muted nl-tip">AI 只解析参数，选点排序由算法完成</span>
         </div>
 
@@ -539,8 +564,17 @@ watch(isLoggedIn, () => {
           </el-form-item>
 
           <el-form-item label="行程节奏">
-            <el-radio-group :model-value="form.pace" @change="v => form.pace = form.pace === v ? '' : v">
-              <el-radio-button v-for="p in paceOptions" :key="p" :value="p">
+            <!-- 不能用 el-radio-group 的 @change 实现"再点一次取消"：
+                 change 只在值**真的变化**时触发，点击已选中的单选按钮
+                 不会产生 change（单选语义上不允许"一个都不选"）。
+                 改为监听每个按钮的 click，由 togglePace 自己判断。 -->
+            <el-radio-group :model-value="form.pace">
+              <el-radio-button
+                v-for="p in paceOptions"
+                :key="p"
+                :value="p"
+                @click="togglePace(p)"
+              >
                 {{ p }}
               </el-radio-button>
             </el-radio-group>
@@ -548,8 +582,13 @@ watch(isLoggedIn, () => {
           </el-form-item>
 
           <el-form-item label="时间安排">
-            <el-radio-group :model-value="timeKey" @change="onTimeChange">
-              <el-radio-button v-for="opt in timeOptions" :key="opt.label" :value="opt.label">
+            <el-radio-group :model-value="timeKey">
+              <el-radio-button
+                v-for="opt in timeOptions"
+                :key="opt.label"
+                :value="opt.label"
+                @click="toggleTime(opt)"
+              >
                 {{ opt.label }}
               </el-radio-button>
             </el-radio-group>
@@ -662,23 +701,6 @@ watch(isLoggedIn, () => {
     <el-dialog v-model="showImport" title="导入线路/地点" width="620px" top="6vh">
     <div class="import-desc">
       粘贴攻略、聊天记录或行程单，系统会从中识别地点，并到高德逐个核对是否真实存在。
-      也可以直接<b>上传一张攻略图</b>，先由视觉模型读出图里的地点，再走同一套核对流程。
-    </div>
-
-    <!-- 攻略图导入：与粘贴文字走同一条后端管线，结果渲染完全一致 -->
-    <div class="import-image-bar">
-      <input
-        ref="importImageEl"
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        class="import-image-input"
-        @change="onImportImageChange"
-      />
-      <el-button :disabled="importing" @click="pickImportImage">
-        <el-icon><Picture /></el-icon>&nbsp;上传攻略图
-      </el-button>
-      <span v-if="importImageName" class="pc-muted">{{ importImageName }}</span>
-      <span v-else class="pc-muted">支持 JPG / PNG / WebP，≤8MB</span>
     </div>
 
     <el-input
@@ -963,4 +985,6 @@ watch(isLoggedIn, () => {
 .home-hero { margin-bottom: var(--app-space-xl); }
 .pc-home { max-width: 1440px; margin: 0 auto; padding: 0 var(--app-space-lg) var(--app-space-2xl); }
 .home-hero :deep(.story-body) { padding-bottom: var(--app-space-3xl, 64px); }
-</style>
+
+/* 隐藏的文件输入：由按钮代理点击 */
+.hidden-file { display: none; }</style>
