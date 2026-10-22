@@ -46,9 +46,41 @@ FIELD_LABELS = {
     "days": "天数",
     "tags": "兴趣偏好",
     "profile": "出行节奏",
+    "companions": "同行伙伴",
     "must_go": "必去景点",
     "avoid": "避开景点",
 }
+
+# 同行伙伴的自然语言 → 表单取值（必须是 schemas.VALID_COMPANIONS 里的值）。
+#
+# ## 为什么需要这张表
+#
+# 表单的取值是「独自 / 家庭 / 情侣 / 朋友 / 老人」，
+# 而 ``agent/memory.py`` 的 ``_COMPANION_RULES`` 产出的是「老人 / 儿童 / 情侣 / 朋友」——
+# **「儿童」不是合法值，「家庭」从没被产出过**，两套词表各说各话。
+#
+# 更直接的后果：用户说「带儿子去厦门玩三天」，旧代码既不抽取同行人，
+# 于是「家庭」标签不会勾上，而 ``COMPANION_SPOT_DELTA["家庭"] = -3``
+# （每天少排 3 个点）、``COMPANION_PREFER["家庭"]``（优先乐园/动物园/植物园）、
+# ``COMPANION_AVOID["家庭"]``（排除酒吧/蹦极）**全部不生效**。
+#
+# 这里统一到表单的合法值，并按"最具体的优先"排列：
+# 「带爸妈和儿子」应同时得到 老人 + 家庭。
+_COMPANION_RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("老人", ("带爸妈", "带父母", "带老人", "和爸妈", "和父母", "陪爸妈",
+              "带长辈", "和长辈", "老人", "长辈", "爷爷", "奶奶", "外公", "外婆")),
+    ("家庭", ("带儿子", "带女儿", "带孩子", "带娃", "带小孩", "亲子",
+              "小朋友", "孩子", "儿子", "女儿", "全家", "一家人", "一家人",
+              "家庭", "带宝宝", "宝宝")),
+    ("情侣", ("和对象", "和女友", "和男友", "和老婆", "和老公", "情侣",
+              "二人世界", "蜜月", "女朋友", "男朋友")),
+    ("朋友", ("和朋友", "和同学", "和同事", "几个朋友", "同学一起",
+              "朋友", "同学", "同事")),
+    ("独自", ("一个人", "独自", "自己去", "自己一个人", "solo", "单人")),
+)
+
+# 「带爸妈和儿子」→ {老人, 家庭}；「一个人」不应再匹配"人"之类
+MAX_COMPANIONS = 3
 
 # ---------------------------------------------------------------- 规则解析
 
@@ -264,6 +296,36 @@ def _clean_places(value: Any) -> List[str]:
 
 # ---------------------------------------------------------------- 对外入口
 
+def _extract_companions(text: str, llm_value=None) -> List[str]:
+    """从原始文本与 LLM 结果里抽取同行伙伴，**只返回合法值**。
+
+    规则优先（"带儿子"这类说法规则能稳定命中，不必依赖 LLM），
+    LLM 结果作为补充（它可能识别出"三代同游"这类需要推断的说法）。
+    """
+    from app.schemas import VALID_COMPANIONS
+
+    found: List[str] = []
+    body = text or ""
+    for canonical, words in _COMPANION_RULES:
+        if any(w in body for w in words) and canonical not in found:
+            found.append(canonical)
+
+    # LLM 给的值只做补集，且必须合法、且要做别名归一
+    alias = {"儿童": "家庭", "亲子": "家庭", "小孩": "家庭", "孩子": "家庭"}
+    raw_list = llm_value if isinstance(llm_value, list) else []
+    for v in raw_list:
+        if not isinstance(v, str):
+            continue
+        name = alias.get(v.strip(), v.strip())
+        if name in VALID_COMPANIONS and name not in found:
+            found.append(name)
+
+    # 「独自」与其他人互斥：说了"一个人"就不该同时有"家庭"
+    if "独自" in found and len(found) > 1:
+        found = [c for c in found if c != "独自"]
+    return found[:MAX_COMPANIONS]
+
+
 async def parse_request(dto: ParseRequestDTO) -> ParsedPlanVO:
     """把自然语言需求解析成 PlanRequestDTO。"""
     text = (dto.text or "").strip()
@@ -317,6 +379,15 @@ async def parse_request(dto: ParseRequestDTO) -> ParsedPlanVO:
         profile = (defaults.profile if defaults and defaults.profile else DEFAULT_PROFILE)
         assumed.append(FIELD_LABELS["profile"])
 
+    # ---- 同行伙伴 ----
+    # 表单取值必须落在 schemas.VALID_COMPANIONS 内，否则前端勾选框对不上。
+    companions = _extract_companions(text, raw.get("companions"))
+    if companions:
+        inferred.append(FIELD_LABELS["companions"])
+    elif defaults and getattr(defaults, "companions", None):
+        companions = list(defaults.companions)
+        assumed.append(FIELD_LABELS["companions"])
+
     # ---- 必去 / 避开 ----
     must_go = _clean_places(raw.get("must_go"))
     if must_go:
@@ -334,6 +405,7 @@ async def parse_request(dto: ParseRequestDTO) -> ParsedPlanVO:
         city=city,
         days=days,
             tags=tags,
+        companions=companions,
         must_go=must_go,
         avoid=avoid,
         profile=profile,
