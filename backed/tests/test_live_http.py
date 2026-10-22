@@ -105,8 +105,9 @@ def main() -> int:
             req = parsed.get("request") or {}
             check("抽取出目的地", req.get("city") == "苏州", str(req))
             check("抽取出天数", req.get("days") == 3, str(req))
-            check("抽取出预算", req.get("budget") == 2500.0, str(req))
             check("抽取出出行节奏", req.get("profile") == "舒适型", str(req))
+            # 预算字段已随预算系统移除，解析结果里不应再出现
+            check("解析结果不含已移除的 budget 字段", "budget" not in req, str(req))
             check("明确报告识别到的字段", len(parsed.get("inferred") or []) >= 4,
                   str(parsed.get("inferred")))
             check("解析来源标记为 llm", parsed.get("source") == "llm", str(parsed.get("source")))
@@ -114,8 +115,8 @@ def main() -> int:
                   f"source={parsed.get('source')}")
 
         # 越界输入必须被夹取而不是透传（白名单/范围防线的端到端验证）
-        resp = client.post("/api/parse", json={"text": "去杭州玩30天，预算50元，喜欢历史和不存在的东西",
-                                               "defaults": {"city": "", "days": 3, "budget": 2000,
+        resp = client.post("/api/parse", json={"text": "去杭州玩30天，喜欢历史和不存在的东西",
+                                               "defaults": {"city": "", "days": 3,
                                                             "tags": [], "must_go": [], "avoid": [],
                                                             "profile": "舒适型"}},
                            timeout=PLAN_TIMEOUT)
@@ -123,7 +124,6 @@ def main() -> int:
             req = (resp.json().get("data") or {}).get("request") or {}
             check(f"天数 30 保留为 30（上限已从 7 提升到 {MAX_TRIP_DAYS}）",
                   req.get("days") == 30, str(req))
-            check("预算 50 被夹到 100", req.get("budget") == 100.0, str(req))
             check("非法标签被白名单过滤",
                   all(t in ["历史", "自然", "美食", "购物", "艺术", "夜生活"]
                       for t in (req.get("tags") or [])), str(req))
@@ -135,7 +135,6 @@ def main() -> int:
         plan_body = {
             "city": "杭州",
             "days": 2,
-            "budget": 1500,
             "tags": ["历史", "自然"],
             "must_go": [],
             "avoid": [],
@@ -157,7 +156,7 @@ def main() -> int:
                 check("增强模式标记存在", "enhanced" in itinerary, str(itinerary)[:200])
                 check("顶层描述已生成或为空", itinerary.get("description") is None or isinstance(itinerary.get("description"), str))
                 print(f"       城市={itinerary.get('city')} 天数={day_count} 条目={item_count} "
-                      f"总费用={itinerary.get('total_cost')} enhanced={itinerary.get('enhanced')}")
+                      f"enhanced={itinerary.get('enhanced')}")
 
                 # 真实数据管线：这几项此前恒为空/恒为 0，是回归重点
                 all_items = [i for d in itinerary.get("days") or [] for i in d.get("items") or []]
@@ -297,8 +296,11 @@ def main() -> int:
                 body = resp.json()
                 check("GET /api/history/{id} 详情", resp.status_code == 200, resp.text[:300])
                 check("详情回放的行程与规划一致",
-                      body["data"]["itinerary"]["total_cost"] == itinerary["total_cost"],
-                      f"{body['data']['itinerary']['total_cost']} != {itinerary['total_cost']}")
+                      len(body["data"]["itinerary"]["days"]) == len(itinerary["days"])
+                      and body["data"]["itinerary"]["city"] == itinerary["city"],
+                      f"{body['data']['itinerary'].get('city')} / {len(body['data']['itinerary']['days'])} 天")
+                check("行程不再含已移除的 total_cost 字段",
+                      "total_cost" not in itinerary, str(list(itinerary.keys())))
                 check("详情保留原始入参", body["data"]["request"]["city"] == "杭州", resp.text[:300])
 
                 print("\n6. 清理与退出")
