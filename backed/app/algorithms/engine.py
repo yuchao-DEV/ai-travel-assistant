@@ -66,7 +66,17 @@ async def solve(req: PlanRequestDTO) -> ItineraryVO:
     adcode = city_info.get("adcode", "")
     center_lat = city_info["center_lat"]
     center_lng = city_info["center_lng"]
-    keywords = city_info.get("keywords", ["景点", "美食"])
+    keywords = list(city_info.get("keywords", ["景点", "美食"]))
+
+    # 「购物中心」刻意**不放进种子关键词**：
+    # 一个购物中心关键词每城市抓 2 页 × 25 条 = 50 个商场，而商场评分普遍
+    # 4.7–4.9，compute_score 里评分权重占 30–40%，结果商场挤掉真正的景点、
+    # 把空位填满——线上出现过「Day1 全是 SM 广场、Day3 全是大悦城/iOiMALL」的
+    # 行程。它不是旅游目的地分类，只是用户偶尔想逛街。
+    # 所以只在用户**主动选了「购物」标签**时才加载。
+    tags = list(getattr(req, "tags", None) or [])
+    if "购物" in tags and "购物中心" not in keywords:
+        keywords.append("购物中心")
 
     weather = await get_weather(adcode)
     # 判断哪些天是雨天

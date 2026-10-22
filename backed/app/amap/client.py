@@ -144,8 +144,22 @@ async def geocode(city: str) -> Optional[Dict[str, Any]]:
 async def get_weather(adcode: str) -> List[str]:
     """查询未来 4 天天气，返回简洁描述列表。
 
-    返回格式: ["晴 25°/15°", "多云 23°/14°", ...]
+    返回格式: ["10-23 晴 25°/15°", "10-24 多云 23°/14°", ...]
     降级时返回空列表。
+
+    ## 曾经的 bug：casts 取错了层级
+
+    高德 v3 ``weather/weatherInfo?extensions=all`` 的响应是::
+
+        {"status":"1", "forecasts":[ {"city":"成都市", "casts":[...]} ]}
+
+    ``casts`` **嵌在 forecasts[0] 里**，顶层没有。旧代码写
+    ``data.get("casts", [])`` 永远拿到空列表，于是**所有城市**的天气
+    都被报成「暂时拿不到」——而接口其实一直是好的。
+
+    另外带上日期：``weather.py`` 用 ``"雨" in w`` 判雨天，
+    ``engine.py`` 用下标映射到第几天。没有日期只能靠位置猜，
+    而高德 casts 的第一天就是今天，行程从明天算起时会整体错一天。
     """
     if not amap_enabled() or not adcode:
         return []
@@ -159,13 +173,18 @@ async def get_weather(adcode: str) -> List[str]:
             })
             resp.raise_for_status()
             data = resp.json()
-            casts = data.get("casts", [])
+            # casts 在 forecasts[0] 里，不是顶层
+            forecasts = data.get("forecasts") or []
+            casts = (forecasts[0].get("casts") or []) if forecasts else []
             result = []
             for c in casts[:4]:
                 day_weather = c.get("dayweather", "未知")
                 day_temp = c.get("daytemp", "?")
                 night_temp = c.get("nighttemp", "?")
-                result.append(f"{day_weather} {day_temp}°/{night_temp}°")
+                date = c.get("date", "")
+                short = date[5:] if len(date) == 10 else ""
+                head = f"{short} " if short else ""
+                result.append(f"{head}{day_weather} {day_temp}°/{night_temp}°")
             return result
     except Exception as e:
         print(f"[amap] weather 降级: {e}")
