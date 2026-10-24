@@ -193,6 +193,64 @@ def get_itinerary(user_id: int, history_id: int) -> HistoryDetailVO:
     return HistoryDetailVO(**item.model_dump(), request=request, itinerary=itinerary)
 
 
+def update_itinerary(user_id: int, history_id: int,
+                     dto: HistorySaveDTO) -> HistoryItemVO:
+    """**覆盖更新**指定 id 的历史行程（只能改自己的）。
+
+    与 :func:`save_itinerary` 的区别：那条靠 `client_id` 做幂等，而迁移过来的
+    老记录 `client_id` 为 NULL，匹配不上就只能新增。用户在「历史回看」里加地点
+    时期望的是"改这条"，所以需要按 id 直接覆盖。
+
+    `client_id` **保持原值**（除非原来是 NULL 且本次带了 client_id）——
+    它是前端本地记录的关联键，覆盖行程不应该改它。
+    """
+    req = dto.request
+    itin = dto.itinerary
+    title = (dto.title or "").strip() or _build_title(dto.origin, req.city, req.days)
+    tags_json = json.dumps(list(req.tags or []), ensure_ascii=False)
+    now = utc_now_iso()
+
+    with transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM itineraries WHERE id = ? AND user_id = ?",
+            (history_id, user_id),
+        ).fetchone()
+        if row is None:
+            raise ApiError("历史行程不存在", code=404)
+
+        # 原 client_id 为 NULL 时允许补写（便于以后继续幂等更新）；否则保留原值
+        keep_client_id = row["client_id"] or ((dto.client_id or "").strip() or None)
+
+        conn.execute(
+            "UPDATE itineraries SET client_id=?, title=?, origin=?, city=?, days=?, "
+            "budget=?, tags=?, profile=?, total_cost=?, request_json=?, "
+            "itinerary_json=?, updated_at=? WHERE id = ? AND user_id = ?",
+            (
+                keep_client_id,
+                title,
+                dto.origin,
+                req.city,
+                req.days,
+                0.0,   # 预算系统已移除，列保留 NOT NULL 故写 0
+                tags_json,
+                req.profile,
+                None,
+                req.model_dump_json(),
+                itin.model_dump_json(),
+                now,
+                history_id,
+                user_id,
+            ),
+        )
+        updated = conn.execute(
+            "SELECT * FROM itineraries WHERE id = ?", (history_id,)
+        ).fetchone()
+
+    logger.info("历史行程已覆盖更新 user_id=%s id=%s city=%s",
+                user_id, history_id, updated["city"])
+    return _row_to_item(updated)
+
+
 def delete_itinerary(user_id: int, history_id: int) -> None:
     """删除一条历史行程（只能删自己的）。"""
     with transaction() as conn:

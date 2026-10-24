@@ -138,6 +138,32 @@ async def solve(req: PlanRequestDTO) -> ItineraryVO:
         # 景点太少（不足以分给每一天）时退回混合聚类，避免有的天没有任何候选
         clusters = kmeans(candidates, req.days)
 
+    # ---- 4b. 必去项兜底注入 ----
+    #
+    # 上面只对**景点**聚类，于是必去里的餐厅/酒店（海底捞、某家老字号、
+    # 某间民宿）根本不进任何一天的 pool —— `select_by_time` 看不到它们，
+    # 必去形同虚设。线上表现就是：加进必去的餐厅，行程里一直没有。
+    #
+    # 这里把"没被任何簇收下"的必去项，挂到**最近的**那天（按簇质心距离），
+    # 让它们能进 select_by_time；`must_go=True` 保证不会被 target_count 挤掉。
+    clustered_ids = {id(p) for cluster in clusters for p in cluster}
+    orphan_must = [p for p in candidates
+                   if getattr(p, "must_go", False) and id(p) not in clustered_ids]
+    if orphan_must:
+        from app.amap.client import haversine   # 局部导入：haversine 在 amap 层
+        centroids = [_centroid(cl) for cl in clusters]
+        for poi in orphan_must:
+            nearest = 0
+            if centroids:
+                nearest = min(
+                    range(len(centroids)),
+                    key=lambda i: haversine(centroids[i][0], centroids[i][1],
+                                            poi.lat, poi.lng),
+                )
+            clusters[nearest].append(poi)
+        logger.info("必去兜底注入 %d 个非景点项到第 %d 天",
+                    len(orphan_must), nearest + 1)
+
     # ---- 5. 每日选点 + 6. 路径排序 + 7. 时间排程 ----
     #
     # 约束从「钱」换成「时间」（决策 B）。三层叠加，**顺序不能变**：
