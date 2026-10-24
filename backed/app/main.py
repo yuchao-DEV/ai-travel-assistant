@@ -164,6 +164,22 @@ def history_save_api(
     return Result(success=True, code=200, data=data.model_dump())
 
 
+@app.put("/api/history/{history_id}", response_model=Result)
+def history_update_api(
+    history_id: int,
+    dto: HistorySaveDTO,
+    user: Optional[Any] = Depends(current_user_required),
+):
+    """**覆盖更新**一条已有历史行程（按 id，而不是按 client_id）。
+
+    为什么需要它：用户在「历史回看」里从灵感加地点，期望的是"改这条行程"，
+    而不是"再多一条"。旧实现只能靠 `client_id` 做幂等更新，而迁移过来的
+    老记录 `client_id` 为 NULL，永远匹配不上 → 每次都新增一条。
+    """
+    data = history_service.update_itinerary(user["id"], history_id, dto)
+    return Result(success=True, code=200, data=data.model_dump())
+
+
 @app.post("/api/history/import", response_model=Result)
 def history_import_api(
     dto: HistoryImportDTO,
@@ -310,7 +326,8 @@ async def import_text_api(payload: ImportTextDTO):
     - 匹配不到的**明确列出并说明原因**，绝不静默丢弃——
       导入功能最常见的坑就是"显示导入成功、实际一半没匹配上"。
     """
-    data = await importer_service.import_text(payload.text, payload.city)
+    data = await importer_service.import_text(
+        payload.text, payload.city, force_city=getattr(payload, "force_city", "") or None)
     return {"success": True, "code": 200, "data": data}
 
 
@@ -326,7 +343,8 @@ if _UPLOAD_OK:
     @app.post("/api/import/image")
     async def import_image_api(
         file: UploadFile = File(...),
-        city: str = Query(default="", description="用户已选的城市，优先于图上识别"),
+        city: str = Query(default="", description="用户已选的目的地（仅作候选，不压过图上城市）"),
+        force_city: str = Query(default="", description="用户明确指定：仍在某个城市核对"),
     ):
         """从攻略图里提取地点并导入（复用文字导入的校验管线）。"""
         limit = vision_service.VISION_MAX_BYTES
@@ -356,10 +374,16 @@ if _UPLOAD_OK:
 
         # 拼成一段文字交给现有管线：城市一行 + 地点逐行
         # （extract_places 对"地点列表"这种形态识别最稳）
-        lines = [guide["city"] or city or ""] + guide["places"]
+        #
+        # **只放图上识别出的城市**，不要拿表单城市兜底：
+        # 旧代码写 `guide["city"] or city`，表单城市会被塞进正文，
+        # 于是 extract_places 必然回读出表单城市，"内容城市"永远等于"表单城市"，
+        # 冲突检测形同虚设（用户传北京图、表单选南京，也检不出来）。
+        lines = [guide["city"] or ""] + guide["places"]
         text = "\n".join(x for x in lines if x)
+        # city_hint 只传表单城市；城市优先级由 importer.import_text 统一判定
         data_out = await importer_service.import_text(
-            text, city or guide["city"] or None)
+            text, city or None, force_city=force_city or None)
 
         data_out["ok"] = True
         data_out["reason"] = ""

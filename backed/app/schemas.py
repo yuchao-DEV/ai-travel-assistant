@@ -457,6 +457,10 @@ class ImportTextDTO(BaseModel):
         default=None, max_length=20,
         description="目的地城市；给了就以它为准做限定城市的高德反查",
     )
+    force_city: str = Field(
+        default="", max_length=20,
+        description="用户明确指定的核对城市；仅用于『攻略图城市与目的地冲突』时"
+                    "用户选择『仍在当前城市核对』的场景。留空则按内容/探测结果判定。")
 
 
 class ParsedPlanVO(BaseModel):

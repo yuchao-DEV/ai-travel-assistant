@@ -421,6 +421,38 @@ def _v5_poi_to_dict(p: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+async def search_nationwide(keyword: str, page_size: int = 5) -> List[Dict[str, Any]]:
+    """**不带城市限定**的全国检索，用于反推「这个地点在哪个城市」。
+
+    为什么需要它：用户可能把「北京攻略图」上传到「目的地＝南京」的表单里，
+    旧逻辑拿南京去核对北京景点，全部匹配失败，还给出一条误导性的
+    「不是可游览的地点」。要修这个，得先把内容里的城市识别出来——
+    而图片里往往只写景点名（「八达岭长城」），没有城市名。
+
+    高德 place/text 不带 region 时会做全国检索，结果每条都带 ``cityname``，
+    众数就是这座攻略图的城市。
+
+    **不走缓存**：这是探测用的短请求，而且缓存目录是按城市名分层的，
+    探测阶段还没有城市名可用。
+    """
+    if not amap_enabled() or not keyword:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            data = await _search_text_v5(client, "", keyword, 1, page_size)
+    except Exception as exc:
+        logger.warning("全国检索失败 %s：%s", keyword, exc)
+        return []
+    if not data:
+        return []
+    out: List[Dict[str, Any]] = []
+    for p in data.get("pois") or []:
+        item = _v5_poi_to_dict(p)
+        if item:
+            out.append(item)
+    return out
+
+
 async def _search_pois_remote(city: str, keyword: str, center_lat: float,
                               center_lng: float, page: int, page_size: int,
                               cache_key: str) -> List[Dict[str, Any]]:

@@ -409,13 +409,123 @@ async def _lookup_one(name: str, city: str, center_lat: float,
     }
 
 
-async def import_text(text: str, city_hint: Optional[str] = None) -> Dict[str, Any]:
-    """导入主流程：抽取地点 → 高德反查 → 返回匹配/未匹配两部分。"""
-    city, places, source, notes = await extract_places(text)
-    city = (city_hint or city or "").strip()
+# ---------------------------------------------------------------- 城市探测
+
+# 探测只取前 N 个地点名：再多也只是重复验证，而每次都多一次高德请求
+DETECT_SAMPLE = 3
+# 至少这么多个地点指向同一城市才采信，否则视为"探测不到"（绝不猜）
+DETECT_MIN_VOTES = 2
+
+
+def _normalize_city_name(raw: str) -> str:
+    """「北京市」→「北京」，「广西壮族自治区」→ 原样（不做激进裁剪）。"""
+    city = (raw or "").strip()
+    if len(city) > 2 and city.endswith("市"):
+        city = city[:-1]
+    return city
+
+
+async def detect_city_from_places(places: List[str],
+                                  min_votes: int = DETECT_MIN_VOTES
+                                  ) -> Tuple[Optional[str], Dict[str, int]]:
+    """用地点名反推攻略内容属于哪个城市。
+
+    做法：取前 ``DETECT_SAMPLE`` 个地点名，做**不带城市限定**的全国检索，
+    取每个结果第一名的 ``cityname`` 投票。**至少 2 票指向同一城市**才采信。
+
+    为什么要这个下限：像「人民公园」「中山路」这种名字全国几十个城市都有，
+    单票众数毫无意义。宁可返回 None（让调用方退回 hint 行为）也不猜。
+
+    返回 ``(city, votes)``；city 为 None 表示探测不到。
+    """
+    from app.amap.client import search_nationwide
+
+    names = [str(x).strip() for x in (places or []) if str(x).strip()]
+    names = names[:DETECT_SAMPLE]
+    if len(names) < min_votes:
+        # 枚举数不够构成"多数"，不猜
+        return None, {}
+
+    votes: Dict[str, int] = {}
+    for name in names:
+        try:
+            hits = await search_nationwide(name, page_size=5)
+        except Exception as exc:      # 网络抖动不该让整个导入失败
+            logger.warning("城市探测请求失败 %s：%s", name, exc)
+            continue
+        if not hits:
+            continue
+        city = _normalize_city_name(hits[0].get("cityname") or "")
+        if city:
+            votes[city] = votes.get(city, 0) + 1
+
+    if not votes:
+        return None, {}
+    city, n = max(votes.items(), key=lambda kv: kv[1])
+    if n < min_votes:
+        logger.info("城市探测未达多数（%s），不采信", votes)
+        return None, votes
+    logger.info("城市探测命中：%s（投票 %s）", city, votes)
+    return city, votes
+
+
+
+async def import_text(text: str, city_hint: Optional[str] = None,
+                    force_city: Optional[str] = None) -> Dict[str, Any]:
+    """导入主流程：抽取地点 → 判定城市 → 高德反查 → 返回匹配/未匹配两部分。
+
+    ## 城市优先级（这是这一版的核心）
+
+        force_city  >  内容识别出的城市  >  地点名反查出的城市  >  city_hint
+
+    旧代码是 ``city_hint or city``——**表单城市无条件压过内容里的城市**。
+    用户表单选南京、上传北京攻略图时，北京景点全部被拿去南京搜，
+    结果是「全部未匹配」，而界面上给出的理由是「不是可游览的地点」，
+    完全误导。
+
+    ``force_city`` 只由用户显式选择时传入（冲突弹窗里点「仍在南京核对」）。
+    """
+    content_city, places, source, notes = await extract_places(text)
+    content_city = _normalize_city_name(content_city or "") or None
+    hint = _normalize_city_name(city_hint or "") or None
+    forced = _normalize_city_name(force_city or "") or None
+
+    # 内容里没写城市时，用地点名反推一次。
+    #
+    # 阈值随「有没有用户城市」变化：
+    #   - 用户已选城市 → 要 2 票才敢覆盖（避免「人民公园」这类同名地误判）
+    #   - 用户没选城市 → 1 票就够。没有可比对的对象，探测结果就是唯一线索；
+    #     坚持 2 票会让"只写了一个地名的攻略图"直接失败（实测 city=None）。
+    detected_city: Optional[str] = None
+    city_votes: Dict[str, int] = {}
+    if not content_city and not forced and places:
+        need = DETECT_MIN_VOTES if hint else 1
+        detected_city, city_votes = await detect_city_from_places(
+            places, min_votes=need)
+
+    if forced:
+        city = forced
+        city_source = "forced"
+    elif content_city:
+        city = content_city
+        city_source = "content"
+    elif detected_city:
+        city = detected_city
+        city_source = "detected"
+    else:
+        city = hint or ""
+        city_source = "hint" if hint else "none"
+
+    # 冲突 = 表单城市与最终城市不一致（且不是用户自己选的 forced）
+    city_conflict = bool(not forced and hint and city and hint != city)
 
     result: Dict[str, Any] = {
         "city": city or None,
+        # 前端据此决定是否弹「攻略图是北京，你在南京」的确认框
+        "city_hint": hint,
+        "city_conflict": city_conflict,
+        "city_source": city_source,
+        "city_votes": city_votes,
         "source": source,
         "notes": notes,
         "places": [],
@@ -451,9 +561,47 @@ async def import_text(text: str, city_hint: Optional[str] = None) -> Dict[str, A
     ])
 
     # 保序：按"匹配到的排前面"输出，但保持各自原始顺序
+    matched = sum(1 for r in resolved if r["matched"])
+
+    # ---- 零命中回补：一个都没匹配上时，重新怀疑城市 ----
+    #
+    # 为什么需要这一步：预判阶段要求"至少 2 个地点指向同一城市"才采信，
+    # 而攻略图常常只写 1 个地名（"八达岭长城"）。此时探测不到城市，
+    # 代码会退回用户城市继续核对 → 全部未匹配，界面上只显示
+    # "不是可游览的地点"，用户完全不知道是城市搞错了。
+    #
+    # 触发条件很窄：**用当前城市一个都没匹配上** + 用户没强制指定城市。
+    # 此时把探测阈值放宽到 1 票，只要高德认为它属于别的城市，
+    # 就用那个城市重查一遍，并把冲突标记出来让用户定夺。
+    if (matched == 0 and not forced and city and places
+            and city == (hint or city)):
+        alt_city, alt_votes = await detect_city_from_places(places, min_votes=1)
+        if alt_city and alt_city != city:
+            alt_geo = await geocode(alt_city)
+            if alt_geo:
+                logger.info("城市回补：%s 在 %s 全部未命中，改按 %s 重查",
+                            places[:3], city, alt_city)
+                resolved = await asyncio.gather(*[
+                    _lookup_one(p2, alt_city, alt_geo["center_lat"],
+                                alt_geo["center_lng"], sem) for p2 in places
+                ])
+                matched = sum(1 for r in resolved if r["matched"])
+                if matched:
+                    # 只有"换个城市真能匹配上"才改判，否则保持原结果
+                    city = alt_city
+                    city_source = "detected"
+                    city_conflict = bool(hint and hint != alt_city)
+                    city_votes = alt_votes
+                    result.update({
+                        "city": city,
+                        "city_conflict": city_conflict,
+                        "city_source": city_source,
+                        "city_votes": city_votes,
+                    })
+
     result["places"] = list(resolved)
-    result["matched_count"] = sum(1 for r in resolved if r["matched"])
-    result["unmatched_count"] = len(resolved) - result["matched_count"]
+    result["matched_count"] = matched
+    result["unmatched_count"] = len(resolved) - matched
     if result["unmatched_count"]:
         result["notes"] = notes + [
             f"有 {result['unmatched_count']} 个地点未能在高德匹配到，已单独列出，"

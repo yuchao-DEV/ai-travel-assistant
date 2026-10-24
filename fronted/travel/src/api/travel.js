@@ -37,8 +37,15 @@ export function parsePlan(text, defaults) {
 
 // 导入线路/地点：POST /api/import/text
 // 从一段文字里抽取地点，**逐个经高德反查验证**；未匹配的会明确返回，不会被静默丢弃
-export function importText(text, city) {
-  return request.post('/api/import/text', { text, city: city || undefined })
+//
+// forceCity：用户在「攻略图城市 ≠ 目的地」的冲突提示里选了"仍在当前城市核对"时传入。
+// 只有显式选择才会覆盖内容识别出的城市——普通调用永远不传。
+export function importText(text, city, forceCity) {
+  return request.post('/api/import/text', {
+    text,
+    city: city || undefined,
+    force_city: forceCity || undefined,
+  })
 }
 
 // 旅行灵感流：GET /api/inspiration?city=&limit=
@@ -85,11 +92,15 @@ export async function getRouteThumbnail(days, width = 750, height = 420) {
 // 与 importText 是**同一条后端管线**，只是输入从"文字"换成"攻略图"：
 //   图片 →（视觉模型）→ 城市 + 地点名 →（importer.import_text）→ 高德逐个校验
 // 所以返回结构与 /api/import/text 完全一致，前端可以共用一套结果渲染。
-export function importImage(file, city) {
+export function importImage(file, city, forceCity) {
   const fd = new FormData()
   fd.append('file', file)
+  // force_city 只在用户明确选择"仍在当前城市核对"时传
+  const params = {}
+  if (city) params.city = city
+  if (forceCity) params.force_city = forceCity
   return request.post('/api/import/image', fd, {
-    params: city ? { city } : undefined,
+    params: Object.keys(params).length ? params : undefined,
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 180000,   // 识图 + 高德逐个校验，比文字导入慢得多
   })
