@@ -2,7 +2,8 @@
 import { reactive, ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
-import { getMeta, importImage, importText, parsePlan } from '@/api/travel'
+import ImageImportCard from '@/components/ImageImportCard.vue'
+import { getMeta, importImage, importText } from '@/api/travel'
 import { getHistoryList } from '@/api/history'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
@@ -156,73 +157,10 @@ const openTrip = (trip) => {
 
 const showPreferences = ref(false)
 
-/* ==================== 自然语言需求解析 ====================
- * LLM 只负责把一句话翻译成结构化参数（/api/parse），
- * 翻译结果回填到表单，用户核对后再走算法引擎规划。
- */
-const nlText = ref('')
-const parsing = ref(false)
-// 解析后的回执：识别到哪些字段 / 哪些用了默认值 / 有什么提示
-const parseResult = ref(null)
-
-const nlPlaceholder = '例如：带爸妈去苏州玩三天，喜欢历史和园林，轻松点'
-
-const handleParse = async () => {
-  const text = nlText.value.trim()
-  if (!text) {
-    showToast('先用一句话说下你的旅行需求')
-    return
-  }
-  parsing.value = true
-  try {
-    const res = await parsePlan(text, {
-      city: formData.city || '',
-      days: formData.days,
-      tags: formData.tags,
-      must_go: formData.must_go,
-      avoid: formData.avoid,
-      profile: formData.profile,
-      // 出行偏好：这几项后端都真的会用（见 engine.py 与 scheduler.py 的说明）
-      companions: formData.companions,
-      pace: formData.pace,
-      day_start: formData.day_start,
-      day_end: formData.day_end,
-    })
-    const data = res && res.data
-    const req = data && data.request
-    if (!req) {
-      showToast('解析失败，请手动填写')
-      return
-    }
-    // 回填表单
-    formData.city = req.city || ''
-    formData.days = req.days
-      formData.tags = req.tags || []
-    formData.profile = req.profile
-    // 同行伙伴必须回填：否则后端识别出「家庭」也不会勾选，
-    // COMPANION_SPOT_DELTA / COMPANION_PREFER / COMPANION_AVOID 全都不生效。
-    formData.companions = Array.isArray(req.companions) ? req.companions : []
-    formData.must_go = req.must_go || []
-    formData.avoid = req.avoid || []
-    parseResult.value = {
-      inferred: data.inferred || [],
-      assumed: data.assumed || [],
-      notes: data.notes || [],
-      source: data.source,
-    }
-    if (data.source === 'rule') showToast('大模型暂不可用，已用本地规则解析')
-    else showToast(req.city ? '已解析，请核对后规划' : '已解析，请补选目的地')
-  } catch (e) {
-    showToast(e.message || '解析失败，请手动填写')
-  } finally {
-    parsing.value = false
-  }
-}
-
-const clearParse = () => {
-  nlText.value = ''
-  parseResult.value = null
-}
+// 「一句话规划」已整体移除：自然语言入口移交 AI 助手（/agent）。
+// 相关状态（nlText / parsing / parseResult / handleParse / clearParse /
+// nlPlaceholder）与 parsePlan 调用一并删除；后端 /api/parse 路由仍在，
+// 但首页不再使用——保留它是为了不破坏 test_nl_parse.py 对 parse_request 的覆盖。
 
 // 从「必去 / 避开」里移除一个地点（解析结果需要可反悔）
 const removePlace = (field, name) => {
@@ -263,6 +201,17 @@ const applyImportData = (data) => {
     showToast(data.reason || '没有从图片里提取到地点')
     return
   }
+  // 城市冲突：攻略图的城市 ≠ 用户已选的目的地。
+  //
+  // 旧代码是 `if (data.city && !formData.city) formData.city = data.city`
+  // ——表单已有城市时**永不覆盖**，同时后端也让 hint 优先，结果北京攻略
+  // 被拿去南京搜，全部未匹配，理由还是误导性的「不是可游览的地点」。
+  // 现在后端会把冲突标出来，这里让用户决定，而不是替用户猜。
+  if (data.city_conflict && data.city && data.city_hint) {
+    pendingConflict.value = data
+    showConflictDialog.value = true
+    return
+  }
   if (data.city && !formData.city) formData.city = data.city
   // 默认勾选全部匹配到的地点；已经在必去里的不重复勾
   importPicked.value = (data.places || [])
@@ -273,12 +222,61 @@ const applyImportData = (data) => {
   }
 }
 
+/** 改用攻略图里的城市：直接套用已核对好的结果，不必重新请求 */
+const useDetectedCity = () => {
+  const data = pendingConflict.value
+  showConflictDialog.value = false
+  pendingConflict.value = null
+  if (!data) return
+  formData.city = data.city
+  applyImportData({ ...data, city_conflict: false })
+  // 城市已改，现在才显示核对层让用户确认要加哪些地点
+  showImport.value = true
+  showToast(`已把目的地切换为「${data.city}」`)
+}
+
+/** 仍在当前城市核对：带 force_city 重发同一张图 / 同一段文字 */
+const forceCurrentCity = async () => {
+  const data = pendingConflict.value
+  showConflictDialog.value = false
+  pendingConflict.value = null
+  if (!data) return
+  importing.value = true
+  try {
+    let res
+    if (lastImportFile.value) {
+      res = await importImage(lastImportFile.value, formData.city || '', formData.city || '')
+    } else if (lastImportText.value) {
+      res = await importText(lastImportText.value, formData.city || '', formData.city || '')
+    }
+    if (res && res.data) {
+      applyImportData(res.data)
+      // 重查结束后再打开核对层；若又冒出新冲突，applyImportData 已经把
+      // pendingConflict 设好并弹了问题，这时就不该再开层
+      if (!res.data.city_conflict) showImport.value = true
+    }
+  } catch (err) {
+    showToast(err.message || '核对失败，请重试')
+  } finally {
+    importing.value = false
+  }
+}
+
+const cancelConflict = () => {
+  showConflictDialog.value = false
+  pendingConflict.value = null
+}
+
 const runImport = async () => {
   const text = importTextValue.value.trim()
   if (!text) {
     showToast('先粘贴一段攻略或行程文字')
     return
   }
+  // 保留原始输入：城市冲突时用户选「仍在当前城市核对」要用同一段文字重发。
+  // 漏了这行的话，forceCurrentCity 的两个分支都不进，弹窗关了但结果还是旧的。
+  lastImportText.value = text
+  lastImportFile.value = null
   importing.value = true
   try {
     const res = await importText(text, formData.city || '')
@@ -293,35 +291,31 @@ const runImport = async () => {
 // ---- 攻略图导入 ----
 // 上限 8MB 与后端一致；超大图本地就拦掉，省一次网络往返
 const IMPORT_IMAGE_MAX = 8 * 1024 * 1024
-const importImageEl = ref(null)
 const importImageName = ref('')
+// 保留上一次导入的原始输入：城市冲突时用户选「仍在当前城市核对」，
+// 需要把**同一张图/同一段文字**带 force_city 重发一次。
+const lastImportFile = ref(null)
+const lastImportText = ref('')
+// 城市冲突弹窗状态（必须在 applyImportData 之前声明，否则触发 TDZ）
+const pendingConflict = ref(null)
+const showConflictDialog = ref(false)
 
-const pickImportImage = () => {
-  if (importImageEl.value) {
-    importImageEl.value.value = ''   // 允许重复选同一张图
-    importImageEl.value.click()
-  }
-}
-
-const onImportImageChange = async (e) => {
-  const file = (e.target.files || [])[0]
+// 由 <ImageImportCard> 触发的选择回调：组件负责类型/大小校验并 emit 一个 File，
+// 这里只做上传与结果处理（冲突弹窗等交互留在页面层，因为双端 UI 不同）。
+const handleImageSelect = async (file) => {
   if (!file) return
-  if (!/^image\//.test(file.type)) {
-    showToast('请选择图片文件（JPG / PNG / WebP）')
-    return
-  }
-  if (file.size > IMPORT_IMAGE_MAX) {
-    showToast(`图片超过 ${IMPORT_IMAGE_MAX / 1024 / 1024} MB，请压缩后重试`)
-    return
-  }
   importImageName.value = file.name
+  lastImportFile.value = file
+  lastImportText.value = ''
   importing.value = true
   try {
     const res = await importImage(file, formData.city || '')
     applyImportData(res && res.data ? res.data : null)
-    // 必须弹出核对层：哪些地点存在、哪些没匹配、为什么，都在里面。
-    // 只弹一个"提取到 N 个地点"的 toast，用户没法确认要加入哪些。
-    if (res && res.data) showImport.value = true
+    // 城市冲突时**不要**同时打开核对层：
+    // 先让用户回答"换不换城市"，选完再由 useDetectedCity / forceCurrentCity
+    // 打开核对层。否则用户会在还没决定城市的时候，就把另一座城市的地点
+    // 加进必去，而表单里还是旧城市——接着点"开始规划"就会用错城市。
+    if (res && res.data && !res.data.city_conflict) showImport.value = true
     const n = (res?.data?.image_places || []).length
     if (n) showToast(`从图片里提取到 ${n} 个地点`)
   } catch (err) {
@@ -445,113 +439,35 @@ watch(isLoggedIn, () => {
     </header>
 
     <div class="page-content">
-      <!-- 自然语言需求输入 -->
-      <div class="nl-section">
-        <div class="nl-head">
-          <van-icon name="magic" size="16" color="var(--app-brand)" />
-          <span class="nl-title">一句话规划</span>
-          <span class="nl-hint">AI 解析后回填表单，规划仍由算法完成</span>
-        </div>
-        <van-field
-          v-model="nlText"
-          type="textarea"
-          rows="2"
-          autosize
-          maxlength="200"
-          show-word-limit
-          :placeholder="nlPlaceholder"
-          class="nl-input"
-        />
-        <div class="nl-actions">
-          <van-button
-            type="primary"
-            size="small"
-            round
-            :loading="parsing"
-            loading-text="解析中"
-            @click="handleParse"
-          >
-            智能解析
-          </van-button>
-          <van-button v-if="nlText || parseResult" size="small" round plain @click="clearParse">
-            清空
-          </van-button>
-          <!-- 图片识别入口：它和"说一句话"是同一件事的两条输入路径
-               （说一句 / 传张攻略图），放在一起用户不用先去点「导入」找。
-               上传后自动弹出核对层，让用户勾选要加入的地点。 -->
-          <van-button
-            size="small"
-            round
-            plain
-            icon="photo-o"
-            :disabled="importing"
-            :loading="importing"
-            @click="pickImportImage"
-          >
-            上传攻略图
-          </van-button>
-          <input
-            ref="importImageEl"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            class="import-image-input"
-            @change="onImportImageChange"
-          />
-          <!-- 入口：一句话规划是"解析后回填表单"，和 AI 助手直接对话是两回事，
-               放在一起让用户知道还有另一种更省事的用法 -->
-          <van-button size="small" round plain icon="chat-o" @click="$router.push('/agent')">
-            和 AI 助手聊
-          </van-button>
-        </div>
+      <!-- 图片导入：说一句话的能力已整体交给「AI 助手」，
+           首页只保留"传张攻略图"这一条输入路径。 -->
+      <ImageImportCard
+        :loading="importing"
+        @select="handleImageSelect"
+        @error="showToast"
+      />
 
-        <!-- 解析回执：让用户看到"识别到什么 / 什么是猜的" -->
-        <div v-if="parseResult" class="nl-receipt">
-          <div v-if="parseResult.inferred.length" class="nl-line">
-            <van-tag type="primary" plain>已识别</van-tag>
-            <span>{{ parseResult.inferred.join('、') }}</span>
-          </div>
-          <div v-if="parseResult.assumed.length" class="nl-line">
-            <van-tag plain>默认值</van-tag>
-            <span>{{ parseResult.assumed.join('、') }}</span>
-          </div>
-          <div v-for="(note, i) in parseResult.notes" :key="i" class="nl-line nl-note">
-            <van-tag type="warning" plain>提示</van-tag>
-            <span>{{ note }}</span>
-          </div>
-        </div>
-
-        <!-- 必去 / 避开：必须可见可删。
-             回执里写着"已识别：必去景点"，却看不到具体是哪几个，
-             用户就无法核对——而这两个字段会作为硬约束参与规划。 -->
-        <div v-if="formData.must_go.length || formData.avoid.length" class="nl-places">
-          <div v-if="formData.must_go.length" class="nl-line">
-            <van-tag type="danger" plain>必去</van-tag>
-            <span class="place-chips">
-              <span v-for="name in formData.must_go" :key="name" class="place-chip must">
-                {{ name }}<van-icon name="cross" size="10" @click="removePlace('must_go', name)" />
-              </span>
+      <!-- 必去 / 避开：必须可见可删。
+           导入后写着"已核对存在 4 个"，却看不到具体是哪几个，用户无法核对——
+           而这两个字段会作为硬约束参与规划。 -->
+      <div v-if="formData.must_go.length || formData.avoid.length" class="places-card">
+        <div v-if="formData.must_go.length" class="nl-line">
+          <van-tag type="danger" plain>必去</van-tag>
+          <span class="place-chips">
+            <span v-for="name in formData.must_go" :key="name" class="place-chip must">
+              {{ name }}<van-icon name="cross" size="10" @click="removePlace('must_go', name)" />
             </span>
-          </div>
-          <div v-if="formData.avoid.length" class="nl-line">
-            <van-tag plain>避开</van-tag>
-            <span class="place-chips">
-              <span v-for="name in formData.avoid" :key="name" class="place-chip avoid">
-                {{ name }}<van-icon name="cross" size="10" @click="removePlace('avoid', name)" />
-              </span>
-            </span>
-          </div>
-          <div class="nl-places-note">这些地点会作为硬约束参与规划：不会被评分排序或时间容量挤掉。</div>
+          </span>
         </div>
-      </div>
-
-      <!-- 两条指定目的地的路径之间的关系，界面原先没说清：
-           上面「一句话规划」里如果提到城市，点智能解析会回填到下面的目的地字段；
-           不写那句话、直接手填也完全可以。
-           加这个分隔条是为了让用户知道"下面这个字段是可选的、上面更快"。 -->
-      <div class="path-divider">
-        <span class="path-divider-line"></span>
-        <span class="path-divider-text">或直接填写</span>
-        <span class="path-divider-line"></span>
+        <div v-if="formData.avoid.length" class="nl-line">
+          <van-tag plain>避开</van-tag>
+          <span class="place-chips">
+            <span v-for="name in formData.avoid" :key="name" class="place-chip avoid">
+              {{ name }}<van-icon name="cross" size="10" @click="removePlace('avoid', name)" />
+            </span>
+          </span>
+        </div>
+        <div class="nl-places-note">这些地点会作为硬约束参与规划：不会被评分排序或时间容量挤掉。</div>
       </div>
 
       <!-- 出发地 + 目的地 -->
@@ -631,11 +547,13 @@ watch(isLoggedIn, () => {
         <div class="manual-link" @click="showToast('手动创建功能开发中')">手动创建线路</div>
       </div>
 
-      <!-- 我的线路 -->
-      <div v-if="myTrips.length" class="my-trips-section">
+      <!-- 我的行程：只在已登录且有记录时显示。
+           未登录时显示"我的线路"（本地记录）会让用户以为是云端数据，
+           点进去才发现要登录——所以未登录时整块不渲染。 -->
+      <div v-if="isLoggedIn && myTrips.length" class="my-trips-section">
         <div class="section-header">
-          <span class="section-title">{{ isLoggedIn ? '我的行程' : '我的线路' }}</span>
-          <span class="section-link" @click="goPage(isLoggedIn ? 'history' : 'mine')">查看全部 ></span>
+          <span class="section-title">我的行程</span>
+          <span class="section-link" @click="goPage('history')">查看全部 &rsaquo;</span>
         </div>
         <div
           v-for="trip in myTrips.slice(0, 2)"
@@ -677,6 +595,42 @@ watch(isLoggedIn, () => {
       </div>
 
       <!-- 导入弹层：粘贴文字 → 识别 → 勾选加入必去 -->
+      <!-- 城市冲突确认：攻略图的城市和已选目的地不一致时出现一次。
+           不能替用户猜——可能是"要去南京但拿北京攻略当参考"，
+           也可能是"我改主意想去北京了"。 -->
+      <van-dialog
+        v-model:show="showConflictDialog"
+        :show-cancel-button="false"
+        :show-confirm-button="false"
+        :close-on-click-overlay="false"
+        class="conflict-dialog"
+      >
+        <div class="conflict-body">
+          <div class="conflict-title">城市不一致</div>
+          <p class="conflict-text">
+            攻略图里识别到
+            <b>「{{ pendingConflict && pendingConflict.city }}」</b>
+            的地点，但你当前的目的地是
+            <b>「{{ pendingConflict && pendingConflict.city_hint }}」</b>。
+          </p>
+          <p class="conflict-hint">
+            已按「{{ pendingConflict && pendingConflict.city }}」核对好
+            {{ pendingConflict && pendingConflict.matched_count || 0 }} 个地点。
+          </p>
+          <div class="conflict-actions">
+            <van-button type="primary" block round @click="useDetectedCity">
+              改用{{ pendingConflict && pendingConflict.city }}
+            </van-button>
+            <van-button plain block round @click="forceCurrentCity">
+              仍在{{ pendingConflict && pendingConflict.city_hint }}核对
+            </van-button>
+            <van-button plain block round @click="cancelConflict">
+              取消
+            </van-button>
+          </div>
+        </div>
+      </van-dialog>
+
       <van-popup v-model:show="showImport" position="bottom" round :style="{ maxHeight: '86%' }">
         <div class="import-sheet">
           <div class="import-sheet-title">导入线路/地点</div>
@@ -1245,6 +1199,19 @@ watch(isLoggedIn, () => {
 }
 
 /* 必去 / 避开 的地点 chips：必须可见，否则解析结果无法核对 */
+/* .places-card 是「一句话规划」删除后独立出来的卡片（原来嵌在 .nl-section 里），
+   现在自己占一层，所以要自带背景/圆角/阴影与上下间距。 */
+.places-card {
+  margin-bottom: 14px;
+  padding: 14px;
+  background: var(--app-surface);
+  border-radius: var(--app-radius-lg);
+  border: 1px solid var(--app-hairline);
+  box-shadow: var(--app-elev-1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .nl-places {
   margin-top: 10px;
   padding-top: 10px;
@@ -1685,4 +1652,42 @@ watch(isLoggedIn, () => {
   .dest-card:active,
   .dest-card:active .dest-img { transform: none !important; }
 }
-</style>
+
+/* ==================== 城市冲突弹窗 ==================== */
+.conflict-body { padding: 20px 18px 16px; text-align: left; }
+.conflict-title {
+  font-family: var(--app-font-serif);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--app-brand-hover);
+}
+.conflict-text {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--app-text);
+}
+.conflict-text b { color: var(--app-brand); font-weight: 600; }
+.conflict-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--app-text-tertiary);
+}
+.conflict-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+/* ==================== 首页纵向节奏 ====================
+   `.page-content` 是普通 block（非 flex），子卡片之间的间距靠各自 margin。
+   原来「一句话规划」卡片自带 margin-bottom:14px，删掉后图片导入卡与
+   出发地卡片会贴在一起——这里显式补回同一档间距（14px），
+   与 .hot-destinations / .param-section 的 16px 视觉上一致。 */
+.page-content > .img-import {
+  margin-bottom: 14px;
+}
+.page-content > .places-card {
+  margin-bottom: 14px;
+}</style>

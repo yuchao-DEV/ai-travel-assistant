@@ -7,12 +7,13 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import ImageImportCard from '@/components/ImageImportCard.vue'
+import { ElMessage , ElMessageBox } from 'element-plus'
 import { ChatDotRound, Picture } from '@element-plus/icons-vue'
 
 import { getHistoryList } from '@/api/history'
 import StorySection from '@/components/StorySection.vue'
-import { getMeta, importImage, importText, parsePlan } from '@/api/travel'
+import { getMeta, importImage, importText } from '@/api/travel'
 import { bindForm } from '@/utils/formDraft'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
@@ -119,9 +120,6 @@ function toggleTime(opt) {
   form.day_end = active ? '' : opt.end
 }
 
-const nlText = ref('')
-const parsing = ref(false)
-const parseResult = ref(null)
 
 const localTrips = ref([])
 const serverTrips = ref([])
@@ -161,58 +159,8 @@ async function loadServerTrips() {
   }
 }
 
-/** 一句话规划：调 /api/parse 抽取参数并回填表单 */
-async function handleParse() {
-  const text = nlText.value.trim()
-  if (!text) {
-    ElMessage.warning('先用一句话说下你的旅行需求')
-    return
-  }
-  parsing.value = true
-  try {
-    const res = await parsePlan(text, {
-      city: form.city || '',
-      days: form.days,
-      tags: form.tags,
-      must_go: [],
-      avoid: [],
-      profile: form.profile,
-      companions: form.companions,
-      pace: form.pace,
-      day_start: form.day_start,
-      day_end: form.day_end,
-    })
-    const data = res?.data
-    const req = data?.request
-    if (!req) {
-      ElMessage.error('解析失败，请手动填写')
-      return
-    }
-    form.city = req.city || ''
-    form.days = req.days
-    form.tags = req.tags || []
-    form.profile = req.profile
-    // 同行伙伴必须回填（与移动端同理）：不回填的话后端识别出「家庭」
-    // 也不会勾选，COMPANION_* 三套适配逻辑全部失效。
-    form.companions = Array.isArray(req.companions) ? req.companions : []
-    // 必去/避开必须写回表单：不回填的话，回执写着「已识别：必去景点」，
-    // 用户以为生效了，实际从未参与规划。
-    form.must_go = req.must_go || []
-    form.avoid = req.avoid || []
-    parseResult.value = {
-      inferred: data.inferred || [],
-      assumed: data.assumed || [],
-      notes: data.notes || [],
-      source: data.source,
-    }
-    if (data.source === 'rule') ElMessage.warning('大模型暂不可用，已用本地规则解析')
-    else ElMessage.success(req.city ? '已解析，请核对后规划' : '已解析，请补选目的地')
-  } catch (e) {
-    ElMessage.error(e.message || '解析失败，请手动填写')
-  } finally {
-    parsing.value = false
-  }
-}
+// 「一句话规划」已整体移除：自然语言入口移交 AI 助手（/agent）。
+// handleParse / parsePlan / nlText / parseResult 一并删除。
 
 /* ==================== 导入线路/地点 ====================
  * 粘贴一段攻略/行程文字 → 抽出地点 → **逐个经高德反查** → 匹配到的加入必去。
@@ -221,6 +169,10 @@ async function handleParse() {
 const showImport = ref(false)
 const importTextValue = ref('')
 const importing = ref(false)
+// 城市冲突弹窗状态 + 重试所需的原始输入
+const pendingConflict = ref(null)
+const lastImportFile = ref(null)
+const lastImportText = ref('')
 const importResult = ref(null)
 const importPicked = ref([])
 
@@ -247,6 +199,16 @@ function applyImportData(data) {
     ElMessage.warning(data.reason || '没有从图片里提取到地点')
     return
   }
+  // 城市冲突：攻略图的城市 ≠ 用户已选目的地。
+  //
+  // 旧代码 `if (data.city && !form.city) form.city = data.city` —— 表单已有城市时
+  // 永不覆盖，后端也让 hint 优先，结果北京攻略被拿去南京搜，全部未匹配，
+  // 理由还是误导性的「不是可游览的地点」。现在让用户明确选择。
+  if (data.city_conflict && data.city && data.city_hint) {
+    pendingConflict.value = data
+    showConflict()
+    return
+  }
   if (data.city && !form.city) form.city = data.city
   importPicked.value = (data.places || [])
     .filter((p) => p.matched && !form.must_go.includes(p.poi.name))
@@ -254,6 +216,56 @@ function applyImportData(data) {
   if (!data.matched_count) {
     ElMessage.warning('没有匹配到可加入的地点，请核对下方说明')
   }
+}
+
+/** 城市冲突确认：改用图片城市 / 仍在当前城市核对 / 取消 */
+function showConflict() {
+  const d = pendingConflict.value
+  if (!d) return
+  ElMessageBox.confirm(
+    `攻略图里识别到「${d.city}」的地点，但你当前的目的地是「${d.city_hint}」。` +
+    `\n已按「${d.city}」核对好 ${d.matched_count || 0} 个地点。`,
+    '城市不一致',
+    {
+      confirmButtonText: `改用${d.city}`,
+      cancelButtonText: `仍在${d.city_hint}核对`,
+      distinguishCancelAndClose: true,
+      type: 'warning',
+    },
+  ).then(() => {
+    // 改用图片城市：直接套用已核对结果，无需重新请求
+    form.city = d.city
+    pendingConflict.value = null
+    applyImportData({ ...d, city_conflict: false })
+    // 城市已确定，这时才打开核对框让用户确认加哪些地点
+    showImport.value = true
+    ElMessage.success(`已把目的地切换为「${d.city}」`)
+  }).catch(async (action) => {
+    if (action !== 'cancel') {
+      pendingConflict.value = null
+      return
+    }
+    // 仍在当前城市核对：带 force_city 重发同一张图/同一段文字
+    const city = form.city || ''
+    importing.value = true
+    try {
+      let res
+      if (lastImportFile.value) {
+        res = await importImage(lastImportFile.value, city, city)
+      } else if (lastImportText.value) {
+        res = await importText(lastImportText.value, city, city)
+      }
+      if (res && res.data) {
+        applyImportData(res.data)
+        // 重查结束后再开核对框；若又冒出新冲突则交给 applyImportData 处理
+        if (!res.data.city_conflict) showImport.value = true
+      }
+    } catch (err) {
+      ElMessage.error(err.message || '核对失败，请重试')
+    } finally {
+      importing.value = false
+    }
+  })
 }
 
 async function runImport() {
@@ -264,6 +276,8 @@ async function runImport() {
   }
   importing.value = true
   try {
+    lastImportText.value = text
+    lastImportFile.value = null
     const res = await importText(text, form.city || '')
     applyImportData(res && res.data ? res.data : null)
   } catch (e) {
@@ -276,36 +290,18 @@ async function runImport() {
 // ---- 攻略图导入 ----
 // 上限 8MB 与后端一致；超大图本地就拦掉，省一次网络往返
 const IMPORT_IMAGE_MAX = 8 * 1024 * 1024
-const importImageEl = ref(null)
-const importImageName = ref('')
-
-function pickImportImage() {
-  if (importImageEl.value) {
-    importImageEl.value.value = ''   // 允许重复选同一张图
-    importImageEl.value.click()
-  }
-}
-
-async function onImportImageChange(e) {
-  const file = (e.target.files || [])[0]
+async function handleImageSelect(file) {
   if (!file) return
-  if (!/^image\//.test(file.type)) {
-    ElMessage.warning('请选择图片文件（JPG / PNG / WebP）')
-    return
-  }
-  if (file.size > IMPORT_IMAGE_MAX) {
-    ElMessage.warning(`图片超过 ${IMPORT_IMAGE_MAX / 1024 / 1024} MB，请压缩后重试`)
-    return
-  }
   importImageName.value = file.name
   importing.value = true
   try {
+    lastImportFile.value = file
+    lastImportText.value = ''
     const res = await importImage(file, form.city || '')
     applyImportData(res && res.data ? res.data : null)
-    // 必须打开对话框：核对结果（哪些存在、哪些没匹配、为什么）都在里面。
-    // 只弹一个"提取到 N 个地点"的 toast，用户没法确认要加入哪些，
-    // 也看不到"八市 → 不是可游览地点"这类原因。
-    if (res && res.data) showImport.value = true
+    // 城市冲突时**先只问城市**，等用户选完再打开核对框；
+    // 同时打开会让用户在还没决定城市时，就把另一座城市的地点加进必去。
+    if (res && res.data && !res.data.city_conflict) showImport.value = true
     const n = (res?.data?.image_places || []).length
     if (n) ElMessage.success(`从图片里提取到 ${n} 个地点`)
   } catch (err) {
@@ -442,74 +438,15 @@ watch(isLoggedIn, () => {
     <div class="home-layout">
       <!-- 左：规划表单 -->
       <div class="col-left">
-        <div ref="formCard" class="pc-card">
-        <h3 class="pc-section-title">
-          <el-icon color="var(--app-brand)"><MagicStick /></el-icon>一句话规划
-        </h3>
-        <el-input
-          v-model="nlText"
-          type="textarea"
-          :rows="3"
-          maxlength="200"
-          show-word-limit
-          resize="none"
-          placeholder="例如：带爸妈去苏州玩三天，喜欢历史和园林，轻松点"
+        <!-- 图片导入：与移动端共用同一个组件（纯 HTML + 令牌，不依赖 Element）。
+             「一句话规划」已整体移除，自然语言入口移交 AI 助手（/agent）。 -->
+        <ImageImportCard
+          :loading="importing"
+          @select="handleImageSelect"
+          @error="(msg) => ElMessage.warning(msg)"
         />
-        <div class="nl-actions">
-          <el-button type="primary" :loading="parsing" :icon="MagicStick" @click="handleParse">
-            智能解析
-          </el-button>
-          <el-button
-            v-if="nlText || parseResult"
-            @click="((nlText = ''), (parseResult = null))"
-          >
-            清空
-          </el-button>
-          <!-- 图片识别入口放在这里：它和"一句话规划"是同一件事的两条输入路径
-               （说一句 / 传张攻略图），放在一起用户不用去找。
-               上传后直接走 /api/import/image，识别出的地点回填到必去列表。 -->
-          <el-button
-            :loading="importing"
-            :icon="Picture"
-            :disabled="importing"
-            @click="pickImportImage"
-          >
-            上传攻略图
-          </el-button>
-          <el-button :icon="ChatDotRound" @click="router.push('/agent')">
-            和 AI 助手聊
-          </el-button>
-          <input
-            ref="importImageEl"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            class="hidden-file"
-            @change="onImportImageChange"
-          />
-          <span v-if="importImageName" class="pc-muted nl-tip">
-            {{ importImageName }}
-          </span>
-          <span class="pc-muted nl-tip">AI 只解析参数，选点排序由算法完成</span>
-        </div>
 
-        <!-- 解析回执：让用户看到"识别到什么 / 什么是猜的" -->
-        <div v-if="parseResult" class="nl-receipt">
-          <div v-if="parseResult.inferred.length" class="receipt-line">
-            <el-tag type="primary" size="small" effect="plain">已识别</el-tag>
-            <span>{{ parseResult.inferred.join('、') }}</span>
-          </div>
-          <div v-if="parseResult.assumed.length" class="receipt-line">
-            <el-tag size="small" effect="plain" type="info">默认值</el-tag>
-            <span>{{ parseResult.assumed.join('、') }}</span>
-          </div>
-          <div v-for="(note, i) in parseResult.notes" :key="i" class="receipt-line">
-            <el-tag size="small" effect="plain" type="warning">提示</el-tag>
-            <span class="warn-text">{{ note }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="pc-card">
+      <div ref="formCard" class="pc-card">
         <h3 class="pc-section-title"><el-icon color="var(--app-brand)"><Promotion /></el-icon>行程参数</h3>
         <el-form label-position="top">
           <div class="form-grid">

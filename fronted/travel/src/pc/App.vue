@@ -18,6 +18,8 @@ const activeMenu = computed(() => {
   const path = route.path
   if (path.startsWith('/timeline')) return '/'
   if (path.startsWith('/history')) return '/mine'
+  // /agent 与 /agent/history 都算在「AI 助手」下，否则子页时菜单无高亮
+  if (path.startsWith('/agent')) return '/agent'
   return path
 })
 
@@ -67,6 +69,12 @@ onMounted(() => {
       <el-menu :default-active="activeMenu" mode="horizontal" class="pc-menu" router :ellipsis="false">
         <el-menu-item index="/">
           <el-icon><HomeFilled /></el-icon>规划
+        </el-menu-item>
+        <!-- AI 助手：移动端是底部 tab 的「AI 助手」，桌面端必须对应存在。
+             删掉旧的「对话」入口时漏了这一项，结果 /agent 页面能打开
+             却没有任何导航入口（只能手输 URL）。 -->
+        <el-menu-item index="/agent">
+          <el-icon><ChatDotRound /></el-icon>AI 助手
         </el-menu-item>
         <el-menu-item index="/mine">
           <el-icon><User /></el-icon>我的
