@@ -1,9 +1,9 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { reactive, ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { getInspiration, getIntercity, getPlan, getRouteThumbnail } from '@/api/travel'
-import { getHistoryDetail, saveHistory } from '@/api/history'
+import { getHistoryDetail, saveHistory, updateHistory } from '@/api/history'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
 import { loadAmap, AMAP_VISUAL_ID } from '@/composables/useAmap'
@@ -61,8 +61,10 @@ const { isLoggedIn, ensureInitialized } = useAuth()
 
 // 带 history_id 进来 = 回看历史行程，直接读后端，不再重新规划
 const historyId = computed(() => route.query.history_id || '')
+// 退出回看模式后仍要覆盖的那条历史记录 id
+const updatingHistoryId = ref('')
 
-const query = {
+const query = reactive({
   // 不设"默认城市"：从「我的行程」回看时 URL 里只有 history_id，
   // 一旦回退到某个硬编码城市，灵感流与城际估算就会按错误的城市去查。
   // 城市以行程为准（见 effectiveCity），此处留空即可。
@@ -73,7 +75,7 @@ const query = {
   profile: route.query.profile || '经典',
   must_go: route.query.must_go ? route.query.must_go.split(',').filter(Boolean) : [],
   avoid: route.query.avoid ? route.query.avoid.split(',').filter(Boolean) : [],
-}
+})
 
 // 本次行程在本机的记录 id：首页提交时生成并透传，回看模式沿用历史记录里的 client_id
 const tripId = ref(route.query.trip_id || '')
@@ -159,7 +161,35 @@ const inspirationItems = ref([])
 const inspirationCategories = ref([])
 const inspirationLoading = ref(false)
 const inspirationCity = ref('')      // 当前灵感数据对应的城市
-const addedNames = ref([])          // 已加入必去的地点名
+
+// ---- 「已在行程里」到底指什么 ----
+//
+// 旧代码用一个 ref 记录"用户点过加进行程的名字"，初始为空。
+// 于是算法已经排进行程的地点（例如 Day 1 的天坛公园），在灵感页仍然显示
+// 「＋ 加进行程」——点下去还会把它升级成 must_go 硬约束并触发一轮重规划。
+// 用户会觉得系统不知道自己已经排过了。
+//
+// 现在把三种状态分清楚：
+//   forcedNames    「已加入必去」——用户强制要求，硬约束（query.must_go）
+//   itineraryNames 「已在行程中」——当前行程里真实存在的地点（算法排的）
+//   addedNames     两者并集，作为灵感卡片按钮的置灰依据
+const forcedNames = computed(() => [...(query.must_go || [])])
+
+const itineraryNames = computed(() => {
+  const s = new Set()
+  for (const day of itinerary.value?.days || []) {
+    for (const item of day.items || []) {
+      if (item?.name) s.add(item.name)
+    }
+  }
+  return s
+})
+
+const addedNames = computed(() => {
+  const s = new Set(forcedNames.value)
+  for (const n of itineraryNames.value) s.add(n)
+  return [...s]
+})
 
 // 城市信息的唯一真源是**正在显示的行程**。
 // 从「我的行程」回看时 URL 里只有 history_id、没有 city，
@@ -192,24 +222,93 @@ const loadInspiration = async (cityArg) => {
 }
 
 // 把灵感卡片加入必去：写入 must_go 后重新规划。
-// 后端的 must_go 是硬约束——不受单项超预算过滤、不受每日 5 个名额限制、预算兜底也不删。
+// 后端的 must_go 是硬约束——不受单项超预算过滤、不受每日 5 个名额限制。
+//
+// ## 这里曾经是坏的
+//
+// 旧实现只 router.replace 了 URL，然后调 fetchPlan()；而 fetchPlan 读的是
+// 模块级快照 `query`（在 setup 时从 route.query 生成一次），**新地点从未进入
+// 这次请求**。表现就是：卡片显示「已加入必去」，行程却一点没变，
+// 只有手动刷新页面才生效——典型的「界面声称的 ≠ 系统实际做的」。
+//
+// 现在同时更新两处：
+//   ① query.must_go（fetchPlan 的入参）
+//   ② URL（刷新/分享后仍然生效）
+/**
+ * 加入/移出必去时，若当前处于「历史回看」模式，先退出回看。
+ *
+ * 为什么必须退出：`fetchPlan()` 第一件事是
+ *
+ *     if (historyId.value) { await fetchFromHistory(); return }
+ *
+ * 回看模式下它只会**重读同一份存档**，完全忽略 must_go —— 表现就是
+ * 「提示说已加入必去，行程一点没变」。用户看到的正是这个。
+ *
+ * 退出回看要同时补齐三件事，否则新一轮规划会缺参数：
+ *   - 去掉 URL 里的 history_id（historyId 是 computed，只能从 URL 去掉）
+ *   - 把城市从**已加载的行程**里补回 query（回看 URL 通常不带 city）
+ *   - 天数/风格同理，以行程实际值为准
+ *
+ * @returns {boolean} 是否发生过"退出回看"
+ */
+const leaveHistoryMode = () => {
+  if (!historyId.value) return false
+  // 记住要覆盖的那条记录：URL 里的 history_id 马上会被移除
+  updatingHistoryId.value = String(historyId.value)
+  const days = itinerary.value?.days?.length
+  query.city = effectiveCity.value || query.city
+  if (days) query.days = days
+  if (itinerary.value?.profile) query.profile = itinerary.value.profile
+  return true
+}
+
+// 把灵感卡片加入必去：写入 must_go 后重新规划。
+// 后端的 must_go 是硬约束——不受单项超预算过滤、不受每日 5 个名额限制。
+//
+// ## 这里曾经是坏的（两次）
+//
+// ① 旧实现只 router.replace 了 URL，然后调 fetchPlan()；而 fetchPlan 读的是
+//    模块级快照 `query`，新地点从未进入这次请求 →「已加入必去」但行程没变。
+// ② 从「我的行程」打开时 historyId 有值，fetchPlan 直接走 fetchFromHistory()
+//    重读存档，must_go 被彻底忽略 → 同样表现为没反应。
+//
+// 现在：先更新 query（入参）→ 必要时退出回看模式 → 同步 URL → 再规划。
 const addToPlan = async (name) => {
+  // 已经在行程里（或已是必去）就不再重复添加：
+  // 加进去会把它从"算法选的"升级成 must_go 硬约束，语义变了。
   if (!name || addedNames.value.includes(name)) return
-  addedNames.value = [...addedNames.value, name]
-  const mustGo = [...(query.must_go || []), name]
-  await router.replace({ path: '/timeline', query: { ...route.query, must_go: mustGo.join(',') } })
-  showToast(`已加入必去：${name}`)
+  if (!query.must_go.includes(name)) query.must_go.push(name)
+  const left = leaveHistoryMode()
+  await router.replace({
+    path: '/timeline',
+    query: {
+      ...route.query,
+      history_id: undefined,
+      city: query.city || undefined,
+      days: query.days || undefined,
+      profile: query.profile || undefined,
+      must_go: query.must_go.join(','),
+    },
+  })
+  showToast(left ? `已加入必去并重新规划：${name}` : `已加入必去：${name}`)
   await fetchPlan()
 }
 
 const removeFromPlan = async (name) => {
-  addedNames.value = addedNames.value.filter((n) => n !== name)
-  const mustGo = (query.must_go || []).filter((n) => n !== name)
+  query.must_go = query.must_go.filter((n) => n !== name)
+  const left = leaveHistoryMode()
   await router.replace({
     path: '/timeline',
-    query: mustGo.length ? { ...route.query, must_go: mustGo.join(',') } : { ...route.query, must_go: undefined },
+    query: {
+      ...route.query,
+      history_id: undefined,
+      city: query.city || undefined,
+      days: query.days || undefined,
+      profile: query.profile || undefined,
+      must_go: query.must_go.length ? query.must_go.join(',') : undefined,
+    },
   })
-  showToast(`已移出必去：${name}`)
+  showToast(left ? `已移出必去并重新规划：${name}` : `已移出必去：${name}`)
   await fetchPlan()
 }
 
@@ -313,6 +412,24 @@ const persistTrip = async () => {
   // 2) 登录用户同步到账号下
   if (!isLoggedIn.value) return
   try {
+    // 历史回看模式下的改动：覆盖原记录，而不是新增一条
+    if (updatingHistoryId.value) {
+      try {
+        await updateHistory(updatingHistoryId.value, {
+          client_id: tripId.value,
+          title,
+          origin: query.origin,
+          request,
+          itinerary: itinerary.value,
+        })
+        savedToAccount.value = true
+        return
+      } catch (err) {
+        // 记录已被删除（404）时不要静默丢改动：清掉覆盖目标，落到下面的新增
+        console.warn('覆盖历史行程失败，改为新增一条', err)
+        updatingHistoryId.value = ''
+      }
+    }
     await saveHistory({
       client_id: tripId.value,
       title,
@@ -813,6 +930,7 @@ onBeforeUnmount(() => {
         :items="inspirationItems"
         :categories="inspirationCategories"
         :added="addedNames"
+      :forced="forcedNames"
         :loading="inspirationLoading"
         @add="addToPlan"
       />
@@ -1041,19 +1159,22 @@ onBeforeUnmount(() => {
           :items="inspirationItems"
           :categories="inspirationCategories"
           :added="addedNames"
+      :forced="forcedNames"
           :loading="inspirationLoading"
           @add="addToPlan"
         />
-        <!-- 已加入必去的地点：可一键移出（must_go 是硬约束，要能反悔） -->
-        <div v-if="addedNames.length" class="added-list">
-          <div class="added-title">已加入必去（{{ addedNames.length }}）</div>
-          <div v-for="name in addedNames" :key="name" class="added-row">
+        <!-- 已加入必去的地点：可一键移出（must_go 是硬约束，要能反悔）。
+             这里必须用 forcedNames 而不是 addedNames——后者还包含
+             "算法排进行程"的地点，那些不是硬约束，也不该出现"移出"按钮 -->
+        <div v-if="forcedNames.length" class="added-list">
+          <div class="added-title">已加入必去（{{ forcedNames.length }}）</div>
+          <div v-for="name in forcedNames" :key="name" class="added-row">
             <span class="added-name">{{ name }}</span>
             <span class="added-remove" @click="removeFromPlan(name)">
               <van-icon name="cross" size="12" />移出
             </span>
           </div>
-          <div class="added-note">「必去」在算法里是硬约束：不会被预算或评分排序挤掉。</div>
+          <div class="added-note">「必去」在算法里是硬约束：不会被评分排序挤掉。</div>
         </div>
       </div>
     </div>

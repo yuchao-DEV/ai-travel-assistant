@@ -14,7 +14,12 @@ import { computed, ref } from 'vue'
 const props = defineProps({
   items: { type: Array, default: () => [] },
   categories: { type: Array, default: () => [] },
-  added: { type: Array, default: () => [] },   // 已加入必去的地点名
+  // 已在行程里（含必去）——用于把按钮置灰
+  added: { type: Array, default: () => [] },
+  // 其中的「硬约束（必去）」——用于区分文案：
+  //   在 forced 里      → 「已加入必去」（用户强制要求，能用移出反悔）
+  //   只在 added 里     → 「已在行程中」（算法排的，不需要重复添加）
+  forced: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
 })
 const emit = defineEmits(['add'])
@@ -48,6 +53,13 @@ const shown = computed(() => {
 })
 
 const isAdded = (name) => props.added.includes(name)
+const isForced = (name) => props.forced.includes(name)
+/** 按钮文案：区分"用户强制的必去"和"算法已排进行程" */
+const addedLabel = (name) => {
+  if (isForced(name)) return '已加入必去'
+  if (isAdded(name)) return '已在行程中'
+  return '＋ 加进行程'
+}
 const photoOf = (item) => (item.photos && item.photos.length ? item.photos[0] : '')
 const fallbackText = (name) => (name || '地').slice(0, 1)
 // 费用来源角标四档：real=高德真实人均；third_party=知识库真实票价；
@@ -111,11 +123,11 @@ const costText = (item) => {
             <span v-else class="insp-cost free">免费</span>
             <button
               class="insp-add"
-              :class="{ added: isAdded(item.name) }"
+              :class="{ added: isAdded(item.name), forced: isForced(item.name) }"
               :disabled="isAdded(item.name)"
               @click.stop="emit('add', item.name)"
             >
-              {{ isAdded(item.name) ? '已加入' : '＋ 加进行程' }}
+              {{ addedLabel(item.name) }}
             </button>
           </div>
         </div>

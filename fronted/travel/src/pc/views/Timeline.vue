@@ -9,12 +9,12 @@
  * 桌面端的核心优势是把「地图」和「行程详情」并排展示，
  * 不需要移动端那种可拖拽 Bottom Sheet 的分层交互。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { reactive, computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back, Clock, Coin, Location, Promotion, Refresh, Sunny } from '@element-plus/icons-vue'
 
-import { getHistoryDetail, saveHistory } from '@/api/history'
+import { getHistoryDetail, saveHistory, updateHistory } from '@/api/history'
 import { getInspiration, getPlan } from '@/api/travel'
 import { useAuth } from '@/composables/useAuth'
 import { loadAmap, AMAP_VISUAL_ID } from '@/composables/useAmap'
@@ -27,8 +27,10 @@ const router = useRouter()
 const { isLoggedIn, ensureInitialized } = useAuth()
 
 const historyId = computed(() => route.query.history_id || '')
+// 退出回看模式后仍要覆盖的那条历史记录 id
+const updatingHistoryId = ref('')
 
-const query = {
+const query = reactive({
   // 不设"默认城市"：从历史记录进入时 URL 里只有 history_id，
   // 一旦回退到硬编码城市，灵感流与城际估算就会按错误的城市去查。
   // 城市以行程为准（见 effectiveCity）。
@@ -39,7 +41,7 @@ const query = {
   profile: route.query.profile || '经典',
   must_go: route.query.must_go ? route.query.must_go.split(',').filter(Boolean) : [],
   avoid: route.query.avoid ? route.query.avoid.split(',').filter(Boolean) : [],
-}
+})
 
 const tripId = ref(route.query.trip_id || '')
 const itinerary = ref(null)
@@ -92,7 +94,30 @@ const inspirationChapters = computed(() => {
     .filter(Boolean)
 })
 
-const addedNames = ref([])
+// ---- 「已在行程里」到底指什么 ----
+// 旧代码只记录"用户点过加进行程的名字"，初始为空，于是算法已排进行程的地点
+// 在灵感页仍然显示「＋ 加进行程」，点下去还会升级成 must_go 硬约束。
+// 现在分开三种状态：
+//   forcedNames    必去的硬约束（query.must_go）
+//   itineraryNames 当前行程里真实存在的地点（算法排的）
+//   addedNames     并集，作为卡片按钮置灰依据
+const forcedNames = computed(() => [...(query.must_go || [])])
+
+const itineraryNames = computed(() => {
+  const s = new Set()
+  for (const day of itinerary.value?.days || []) {
+    for (const item of day.items || []) {
+      if (item?.name) s.add(item.name)
+    }
+  }
+  return s
+})
+
+const addedNames = computed(() => {
+  const s = new Set(forcedNames.value)
+  for (const n of itineraryNames.value) s.add(n)
+  return [...s]
+})
 
 // 城市信息的唯一真源是**正在显示的行程**：从历史进入时 URL 不带 city，
 // 直接读 query 会拿到空值或历史请求里的旧值。
@@ -120,19 +145,65 @@ async function loadInspiration(cityArg) {
   }
 }
 
-// 把灵感卡片加入必去：写入 must_go 后重新规划（后端里它是硬约束）
+/**
+ * 加入/移出必去时，若正处于「历史回看」模式，先退出回看。
+ *
+ * `fetchPlan()` 开头是 `if (historyId.value) { await fetchFromHistory(); return }`，
+ * 回看模式下它只重读同一份存档、完全忽略 must_go —— 于是「提示已加入必去，
+ * 行程一点没变」。退出回看要去掉 URL 里的 history_id（historyId 是 computed），
+ * 并把城市/天数/风格从**已加载的行程**里补回 query，否则新一轮规划缺参数。
+ */
+const leaveHistoryMode = () => {
+  if (!historyId.value) return false
+  // 记住要覆盖的那条记录：URL 里的 history_id 马上会被移除
+  updatingHistoryId.value = String(historyId.value)
+  const days = itinerary.value?.days?.length
+  query.city = effectiveCity.value || query.city
+  if (days) query.days = days
+  if (itinerary.value?.profile) query.profile = itinerary.value.profile
+  return true
+}
+
+// 把灵感卡片加入必去：写入 must_go 后重新规划（后端里它是硬约束）。
+//
+// 要**同时**更新两处并处理回看模式：
+//   ① query.must_go —— fetchPlan 的入参（只改 URL 的话本次请求仍用旧快照）
+//   ② URL —— 刷新/分享后仍然生效
+//   ③ 历史回看模式下先退出，否则 fetchPlan 只会重读存档
 async function addToPlan(name) {
   if (!name || addedNames.value.includes(name)) return
-  addedNames.value = [...addedNames.value, name]
   if (!query.must_go.includes(name)) query.must_go.push(name)
-  ElMessage.success(`已加入必去：${name}`)
+  const left = leaveHistoryMode()
+  await router.replace({
+    path: '/timeline',
+    query: {
+      ...route.query,
+      history_id: undefined,
+      city: query.city || undefined,
+      days: query.days || undefined,
+      profile: query.profile || undefined,
+      must_go: query.must_go.join(','),
+    },
+  })
+  ElMessage.success(left ? `已加入必去并重新规划：${name}` : `已加入必去：${name}`)
   await fetchPlan()
 }
 
 async function removeFromPlan(name) {
-  addedNames.value = addedNames.value.filter((n) => n !== name)
   query.must_go = query.must_go.filter((n) => n !== name)
-  ElMessage.info(`已移出必去：${name}`)
+  const left = leaveHistoryMode()
+  await router.replace({
+    path: '/timeline',
+    query: {
+      ...route.query,
+      history_id: undefined,
+      city: query.city || undefined,
+      days: query.days || undefined,
+      profile: query.profile || undefined,
+      must_go: query.must_go.length ? query.must_go.join(',') : undefined,
+    },
+  })
+  ElMessage.info(left ? `已移出必去并重新规划：${name}` : `已移出必去：${name}`)
   await fetchPlan()
 }
 
@@ -286,6 +357,24 @@ async function persistTrip() {
 
   if (!isLoggedIn.value) return
   try {
+    // 历史回看模式下的改动：覆盖原记录，而不是新增一条
+    if (updatingHistoryId.value) {
+      try {
+        await updateHistory(updatingHistoryId.value, {
+          client_id: tripId.value,
+          title,
+          origin: query.origin,
+          request,
+          itinerary: itinerary.value,
+        })
+        savedToAccount.value = true
+        return
+      } catch (err) {
+        // 记录已被删除（404）时不要静默丢改动：清掉覆盖目标，落到下面的新增
+        console.warn('覆盖历史行程失败，改为新增一条', err)
+        updatingHistoryId.value = ''
+      }
+    }
     await saveHistory({
       client_id: tripId.value,
       title,
@@ -406,6 +495,7 @@ watch(panelTab, async (tab) => {
           :items="inspirationItems"
           :categories="inspirationCategories"
           :added="addedNames"
+          :forced="forcedNames"
           :loading="inspirationLoading"
           @add="addToPlan"
         />
@@ -443,7 +533,7 @@ watch(panelTab, async (tab) => {
                这既满足标注要求，也正好是项目的差异点，不该藏起来。 -->
           <div v-if="itinerary.description" class="ai-disclosure">
             <el-tag size="small" effect="plain" type="warning">AI 生成</el-tag>
-            <span>以上介绍文字由大模型撰写；景点、顺序、时间与费用由算法引擎排定</span>
+            <span>以上介绍文字由大模型撰写；景点、顺序、时间由算法引擎排定</span>
           </div>
         </div>
 
@@ -500,21 +590,27 @@ watch(panelTab, async (tab) => {
                       <span v-else class="cost-src est">门票待确认</span>
                       <span v-if="item.cost_note" class="cost-note">{{ item.cost_note }}</span>
                     </span>
-                    <span class="score">评分 {{ item.score }}</span>
+                    <!-- score 是算法加权总分（兴趣 + 口碑 − 绕路），取值范围 0–1。
+                         直接显示 "0.36" 会让用户以为是满分 1 分的评分、觉得这地方很差；
+                         换算成百分比并说清是什么分，才不至于误导。 -->
+                    <span class="score">匹配度 {{ Math.round((item.score || 0) * 100) }}%</span>
                   </div>
                   <div v-if="item.open_hours" class="item-hours">
                     <el-icon><Clock /></el-icon>{{ item.open_hours }}
                   </div>
 
-                  <!-- 可解释评分：把算法的四维分数直接亮出来 -->
+                  <!-- 可解释评分：亮出算法的**三维**分量。
+                       费用维度已随后端 ScoreBreakdown 一起删除（预算系统移除），
+                       这里若继续渲染 cost，会画出一条永远为 0 的空进度条——
+                       既占地方又让人以为"这个点不花钱/没数据"。 -->
                   <div class="breakdown">
-                    <div v-for="(label, key) in { interest: '兴趣', rating: '口碑', detour: '绕路', cost: '费用' }" :key="key" class="bd-item">
+                    <div v-for="(label, key) in { interest: '兴趣', rating: '口碑', detour: '绕路' }" :key="key" class="bd-item">
                       <span class="bd-label">{{ label }}</span>
                       <el-progress
                         :percentage="Math.round((item.score_breakdown?.[key] || 0) * 100)"
                         :show-text="false"
                         :stroke-width="5"
-                        :color="key === 'detour' || key === 'cost' ? 'var(--app-warning)' : 'var(--app-brand)'"
+                        :color="key === 'detour' ? 'var(--app-warning)' : 'var(--app-brand)'"
                       />
                     </div>
                   </div>
@@ -534,13 +630,14 @@ watch(panelTab, async (tab) => {
               :items="inspirationItems"
               :categories="inspirationCategories"
               :added="addedNames"
+          :forced="forcedNames"
               :loading="inspirationLoading"
               @add="addToPlan"
             />
             <!-- 已加入必去的地点：可一键移出（必须项要能反悔） -->
-            <div v-if="addedNames.length" class="added-list">
-              <div class="added-title">已加入必去（{{ addedNames.length }}）</div>
-              <div v-for="name in addedNames" :key="name" class="added-row">
+            <div v-if="forcedNames.length" class="added-list">
+              <div class="added-title">已加入必去（{{ forcedNames.length }}）</div>
+              <div v-for="name in forcedNames" :key="name" class="added-row">
                 <span class="added-name">{{ name }}</span>
                 <el-button link type="info" size="small" @click="removeFromPlan(name)">移出</el-button>
               </div>
