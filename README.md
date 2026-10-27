@@ -29,22 +29,25 @@
 - [十四、常见问题 FAQ](#十四常见问题-faq)
 - [十五、版本与历史](#十五版本与历史)
 - [十六、用户系统与数据库设计](#十六用户系统与数据库设计)
+- [十七、团队信息](#十七团队信息)
 
 ---
 
 ## 一、核心特性
 
 ### 规划能力
+
 - **结构化参数输入**：目的地、天数（1–30）、兴趣标签（历史/自然/美食/购物/艺术/夜生活）、必去景点、规避景点、出行风格（悠闲/经典/尽览）、行程节奏（紧凑/适中/宽松）、同行伙伴（独自/家庭/情侣/朋友/老人）。
 - **真实地图数据**：接入高德 POI 文本搜索、天气、地理编码、公交路径规划，景点坐标、评分、类型均来自真实数据而非大模型编造。
 - **自研算法全链路**：KMeans++ 空间分天 → 三维评分（兴趣/口碑/绕路）+ 时间容量选点 → 贪心最近邻 + 2-opt 路径优化 → 营业时间/用餐时段/交通耗时时间排程。
 - **可解释评分**：每个景点给出 `兴趣匹配 / 高德口碑 / 绕路成本` 三维归一化分数（0–1），前端可直接展示。
 - **天气硬约束**：雨天自动剔除室外景点（必去景点除外）。
-- **多偏好方案**：三套出行风格（悠闲 / 经典 / 尽览）**同时改变评分权重与每日时间预算**，选点结果不同而非文案不同。
+- **多偏好方案**：三套出行风格（悠闲 / 经典 / 尽览）**同时改变评分权重与每日时间窗容量**，选点结果不同而非文案不同。
 - **LLM 只做表达**：大模型仅根据算法产出的结构化 JSON 生成行程描述与每日导语，**无权修改任何时间、地点**；润色结果再经实体校验，防止模型"幻觉"出不存在的景点。
 
 ### Agent 与 RAG
-- **Function Calling 主循环**：14 个工具（地理编码 / POI 搜索 / 天气 / 知识库检索 / 行程生成 / 路线优化 / 排程 / 预算校验 / 城际估算 / 历史回看 / 偏好读取…），模型自主决定调哪些、调几次、何时停。
+
+- **Function Calling 主循环**：14 个工具（地理编码 / POI 搜索 / 天气 / 知识库检索 / 行程生成 / 路线优化 / 排程 / 城际估算 / 历史回看 / 偏好读取…），模型自主决定调哪些、调几次、何时停。
 - **工具按需挂载**：首轮只给 6 个核心工具，出现「调整 / 换顺序 / 太满 / 超预算 / 为什么」等信号时才追加其余 8 个 —— schema 每轮都要带，这一步省下约 40% 输入 token。
 - **降级即兜底**：轮数 / 工具数 / 时长任一耗尽，平滑切到确定性链路（等价于原来的 `/api/parse → /api/plan`）。**最差体验等于没有 Agent 之前**。
 - **RAG 混合检索**：自研中文字符分词（bigram + unigram）+ FTS5 倒排 + 向量双索引；BM25 ∥ 向量 → RRF 融合 → LLM 重排。Embedding 不可用时整体退化为纯关键词检索，不报错。
@@ -52,18 +55,21 @@
 - **可观测**：会话过程中推送 10 类 SSE 事件（思考 / 工具开始 / 工具结束 / 检索命中 / 行程 / 画像更新…），前端渲染成「思考链 + 工具卡片」。
 
 ### 交互体验
+
 - **首页**：**「一句话规划」自然语言输入**（AI 解析后回填表单并展示"已识别/默认值/提示"回执）、出发地 + 目的地双输入、热门目的地轮播、天数/偏好弹层、蓝紫渐变「AI 规划旅程」按钮、历史线路本地存档、线路导入入口。
 - **行程页**：上半屏为**嵌入高德 SDK 的全屏可视化地图**（带数据可视化项目图层、景点序号 Marker、按天着色路线），下半屏为**可上下拖拽的 Bottom Sheet 面板**（三档吸附：全屏 / 半屏 / 收拢），面板内含行程总览、单日详情、待安排、旅行灵感、预订管理等视图。
 - **AI 对话**：Agent 页基于 SSE 事件流，实时展示**思考链 + 工具卡片 + 检索来源**，最终答复逐字输出；空状态给可点示例直接发起。
 - **移动端优先**：Vant 4 组件库，圆角卡片 + 蓝紫主色，对标主流旅行 App 视觉。
 
 ### 工程能力
+
 - 高德 POI / 交通结果 **24 小时 / 7 天本地文件缓存**，按需调用，节省配额。
 - 高德不可用或 Key 未配置时自动**降级**（`enhanced=false`），服务不直接报错。
 - 前端 Vite 代理 `/api → 8080`，开发环境无跨域困扰。
 - 旧版纯 LLM 推荐接口（`POST /api/travel/recommend`）**已下线**，代码保留作架构演进对照（见「附录 · 已下线接口」）。
 
 ### 用户系统与数据持久化
+
 - **账号密码注册 / 登录**：`pbkdf2-sha256` + 每用户独立 salt（16 字节）+ 20 万次迭代，存储格式 `pbkdf2$迭代$salt$hash`，换算法时可平滑迁移；账号 3–20 位（字母/数字/下划线/中文），归一为小写存储，避免 `Alice` 与 `alice` 撞车。
 - **存库的不透明 Token**：登录态用随机串存 `auth_tokens` 表，服务端可主动作废（退出登录即删行），无需 JWT 依赖。
 - **行程历史持久化**：用户登录后生成的行程（完整 `ItineraryVO`）保存到账号下，支持分页列表、回看、删除、以及本机记录批量导入（按 `client_id` 幂等去重）。
@@ -75,46 +81,46 @@
 
 ### 后端（`backed/`）
 
-| 分类 | 技术 | 版本 | 用途 |
-| --- | --- | --- | --- |
-| 语言 | Python | 3.10+ | 推荐 3.11 / 3.12 |
-| Web 框架 | FastAPI | 0.115.0 | HTTP API、参数校验、SSE |
-| ASGI 服务 | uvicorn[standard] | 0.30.6 | 应用服务器（热重载） |
-| 数据校验 | Pydantic | 2.9.2 | DTO / VO 模型 |
-| HTTP 客户端 | httpx | 0.27.2 | 调用高德、大模型（支持流式） |
-| 配置 | python-dotenv | 1.0.1 | 读取 `.env` |
-| 数据库 | SQLite + 标准库 `sqlite3` | — | 用户、验证码、登录态、历史行程，**无 ORM** |
-| 算法 | 纯 Python 标准库 | — | KMeans / 背包 / 2-opt，**无 numpy / OR-Tools** |
+| 分类       | 技术                     | 版本      | 用途                                         |
+| -------- | ---------------------- | ------- | ------------------------------------------ |
+| 语言       | Python                 | 3.10+   | 推荐 3.11 / 3.12                             |
+| Web 框架   | FastAPI                | 0.115.0 | HTTP API、参数校验、SSE                          |
+| ASGI 服务  | uvicorn[standard]      | 0.30.6  | 应用服务器（热重载）                                 |
+| 数据校验     | Pydantic               | 2.9.2   | DTO / VO 模型                                |
+| HTTP 客户端 | httpx                  | 0.27.2  | 调用高德、大模型（支持流式）                             |
+| 配置       | python-dotenv          | 1.0.1   | 读取 `.env`                                  |
+| 数据库      | SQLite + 标准库 `sqlite3` | —       | 账号、登录态、历史行程、知识库索引，**无 ORM**                |
+| 算法       | 纯 Python 标准库           | —       | KMeans / 背包 / 2-opt，**无 numpy / OR-Tools** |
 
 ### 前端（`fronted/travel/`，双端同工程）
 
 **同一个 Vite 工程、两个入口**，共用后端、算法、`src/api`、`src/utils`、`src/composables`：
 
-| 入口 | 访问路径 | UI 组件库 | 定位 |
-| --- | --- | --- | --- |
-| 移动端 H5 | `/` | Vant 4 | 手机浏览器 / 微信内打开 |
+| 入口      | 访问路径   | UI 组件库         | 定位              |
+| ------- | ------ | -------------- | --------------- |
+| 移动端 H5  | `/`    | Vant 4         | 手机浏览器 / 微信内打开   |
 | 桌面端 Web | `/pc/` | Element Plus 2 | 电脑浏览器，行程与地图左右并排 |
 
-| 分类 | 技术 | 版本 |
-| --- | --- | --- |
-| 框架 | Vue | ^3.5.40（Composition API + `<script setup>`） |
-| 构建工具 | Vite | ^8.1.5（多入口构建） |
-| UI 组件（移动端） | Vant | ^4.10.2 |
-| UI 组件（桌面端） | Element Plus | ^2.14.7（+ `@element-plus/icons-vue`） |
-| 路由 | Vue Router | ^4.3.0（移动端 history / 桌面端 hash） |
-| HTTP | axios | ^1.20.0 |
-| 地图 | 高德 JS API | 2.0（含 `AMap.Visual` 插件） |
-| Node 运行时 | Node.js | ^22.18 或 ≥24.12 |
+| 分类         | 技术           | 版本                                          |
+| ---------- | ------------ | ------------------------------------------- |
+| 框架         | Vue          | ^3.5.40（Composition API + `<script setup>`） |
+| 构建工具       | Vite         | ^8.1.5（多入口构建）                               |
+| UI 组件（移动端） | Vant         | ^4.10.2                                     |
+| UI 组件（桌面端） | Element Plus | ^2.14.7（+ `@element-plus/icons-vue`）        |
+| 路由         | Vue Router   | ^4.3.0（移动端 history / 桌面端 hash）              |
+| HTTP       | axios        | ^1.20.0                                     |
+| 地图         | 高德 JS API    | 2.0（含 `AMap.Visual` 插件）                     |
+| Node 运行时   | Node.js      | ^22.18 或 ≥24.12                             |
 
 ### 外部服务
 
-| 服务 | 用途 | 配置位置 |
-| --- | --- | --- |
-| 高德开放平台 · Web 服务 Key | 后端 REST：地理编码 / 天气 / POI / 公交 | `backed/.env` 的 `AMAP_KEY` |
-| 高德开放平台 · Web 端 JS Key + 安全密钥 | 前端地图渲染 | `fronted/travel/.env.local` 的 `VITE_AMAP_KEY` / `VITE_AMAP_SECURITY_CODE` |
-| 高德数据可视化 · Visual 项目 ID | 前端地图可视化图层 | 同上 `VITE_AMAP_VISUAL_ID` |
-| SiliconFlow / DeepSeek 大模型 | 行程润色 + 流式对话 | `backed/.env` 的 `LLM_*`（Key 与 `LLM_BASE_URL` 必须同源） |
-| 短信通道 | 注册/登录验证码 | `backed/.env` 的 `SMS_*`（当前 `dev` 模拟模式） |
+| 服务                           | 用途                           | 配置位置                                                                      |
+| ---------------------------- | ---------------------------- | ------------------------------------------------------------------------- |
+| 高德开放平台 · Web 服务 Key          | 后端 REST：地理编码 / 天气 / POI / 公交 | `backed/.env` 的 `AMAP_KEY`                                                |
+| 高德开放平台 · Web 端 JS Key + 安全密钥 | 前端地图渲染                       | `fronted/travel/.env.local` 的 `VITE_AMAP_KEY` / `VITE_AMAP_SECURITY_CODE` |
+| 高德数据可视化 · Visual 项目 ID       | 前端地图可视化图层                    | 同上 `VITE_AMAP_VISUAL_ID`                                                  |
+| SiliconFlow / DeepSeek 大模型   | 行程润色 + 流式对话                  | `backed/.env` 的 `LLM_*`（Key 与 `LLM_BASE_URL` 必须同源）                        |
+| 地图渲染                         | 高德 JS API 2.0                | 前端 `fronted/travel/.env.local` 的 `VITE_AMAP_*`                            |
 
 ---
 
@@ -145,16 +151,16 @@ AI-travel-assistant/
 │   │   └── app.db                   # SQLite 数据库（首次启动自动创建，勿提交）
 │   ├── cache/                       # 运行期文件缓存（按城市分目录，自动生成）
 │   ├── tests/                       # 测试脚本（无需 pytest）
-│   │   ├── test_algorithms.py       # 算法引擎 + 数据管线单测：评分/预算/路径/必去/营业时间/地理编码核对、灵感分类/请求合并/必去匹配/预算利用/导入抽取（离线，140 项）
+│   │   ├── test_algorithms.py       # 算法引擎 + 数据管线单测：评分/路径/必去/营业时间/地理编码核对、灵感分类/请求合并/必去匹配/导入抽取（离线，303 项）
 │   │   ├── test_nl_parse.py         # 自然语言解析单测：规则兜底/白名单/夹取（离线，49 项）
 │   │   ├── test_auth_history.py     # 用户系统 + 历史行程集成测试（进程内，54 项）
 │   │   └── test_live_http.py        # 针对运行中服务的真实 HTTP 冒烟（含真实 /api/plan）
 │   └── app/
 │       ├── main.py                  # FastAPI 入口：生命周期建库、CORS、异常处理、全部路由
-│       ├── config.py                # 配置读取（LLM、高德、缓存 TTL、数据库、登录态、短信、端口）
+│       ├── config.py                # 配置读取（LLM、高德、缓存 TTL、数据库、登录态、检索、端口）
 │       ├── schemas.py               # Pydantic 模型：PlanRequestDTO / ItineraryVO / 认证与历史 DTO
 │       ├── security.py              # 账号校验、pbkdf2 密码哈希、token 生成、脱敏
-│       ├── sms.py                   # 短信通道抽象（dev / aliyun / tencent）
+│       ├── sms.py                   # 【遗留】早期短信通道抽象，当前登录已改为账号密码
 │       ├── errors.py                # ApiError 业务异常（统一响应体）
 │       ├── deps.py                  # 鉴权依赖：解析 Bearer token → 当前用户
 │       ├── llm.py                   # 大模型调用（非流式 chat + 流式 chat_stream）
@@ -300,14 +306,13 @@ flowchart TB
         ENG["算法引擎 algorithms/"]
         LLMX["LLM 润色 services/polish.py"]
         AM["高德客户端 amap/client.py"]
-        DB[("SQLite app.db<br/>users / sms_codes<br/>auth_tokens / itineraries")]
+        DB[("SQLite app.db<br/>users / auth_tokens<br/>itineraries / 检索与 Agent 表")]
     end
 
     subgraph EXT["外部服务"]
         AMap["高德开放平台 REST"]
         Visual["高德 JS API + Visual（前端直连）"]
         SF["SiliconFlow DeepSeek"]
-        SMS["短信通道（dev 模拟）"]
     end
 
     H -->|POST /api/plan| R
@@ -318,14 +323,13 @@ flowchart TB
     R --> SVC --> ENG
     R --> AUTH --> DB
     R --> HIST --> DB
-    AUTH -->|验证码| SMS
     ENG -->|POI/天气/路径| AM --> AMap
     ENG -->|结构化 ItineraryVO| LLMX
     LLMX -->|只润色文案| SF
     LLMX -->|实体校验后返回| SVC --> R --> T
     T -->|生成成功后落库| R
     T -->|加载地图 SDK| Visual
-    C -->|SSE /api/travel/chat| R --> SF
+    C -->|SSE /api/agent/chat| R --> SF
 ```
 
 ### 一次 `/api/plan` 请求的完整流水线
@@ -335,19 +339,17 @@ flowchart LR
     A[PlanRequestDTO] --> B[地理编码 geocode]
     B --> C[查询天气]
     C --> D[拉取多关键词 POI<br/>24h缓存+去重]
-    D --> E[typecode 富化<br/>补 tags/室内外/费用]
+    D --> E[typecode 富化<br/>补 tags/室内外/票价来源]
     E --> F[候选筛选<br/>tag匹配/必去/avoid]
     F --> G[KMeans++ 聚类<br/>POI 分到各天]
     G --> H[雨天过滤室外点]
-    H --> I[四维加权评分]
+    H --> I[三维加权评分<br/>兴趣/口碑/绕路]
     I --> J[时间容量选点<br/>评分降序 + 必去硬约束]
     J --> K[贪心+2-opt<br/>路径优化]
     K --> L[按路径顺序重算评分]
     L --> M[时间排程<br/>营业/用餐/交通]
-    M --> N{总费用超预算?}
-    N -->|是| O[删最低分点重算]
-    N -->|否| P[组装 ItineraryVO]
-    O --> P
+    M --> N[必去项兜底注入<br/>未入簇的必去项挂到最近簇]
+    N --> P[组装 ItineraryVO]
     P --> Q[LLM 润色 description/导语]
     Q --> R[实体校验防幻觉]
     R --> S[返回 JSON]
@@ -371,14 +373,12 @@ sequenceDiagram
     participant D as SQLite
     participant X as 高德/LLM
 
-    U->>F: 输入手机号，点「发送验证码」
-    F->>B: POST /api/auth/send-code {phone, scene}
-    B->>D: 写 sms_codes（哈希 + 过期时间）
-    B-->>F: 200 {expires_in, debug_code?}（dev 模式回显）
-    U->>F: 填写验证码，点「注册并登录」
-    F->>B: POST /api/auth/register {phone, code}
-    B->>D: 校验并消费验证码 → 建 users → 发 token
+    U->>F: 输入账号与密码，点「登录」（或先注册）
+    F->>B: POST /api/auth/login {username, password}
+    B->>D: 查 users → verify_password 校验 pbkdf2 哈希
+    B->>D: 写入 auth_tokens（随机 token + 过期时间）
     B-->>F: 200 {token, user}
+    F->>F: token 存 localStorage，后续请求带 Authorization
     F->>F: token 存 localStorage，后续请求带 Authorization
     F->>B: POST /api/plan（带 Bearer token）
     B->>X: 高德 POI/天气/路径 + LLM 润色
@@ -396,135 +396,212 @@ sequenceDiagram
 
 ## 五、快速开始
 
-### 环境要求
+两种使用方式，按需选择：
 
-- Python 3.10+（推荐 3.11/3.12）
-- Node.js 22.18+ 或 24.12+（`package.json#engines` 要求）
-- npm
-- 可用的高德开放平台 Key、SiliconFlow API Key
+- **5.1 本地部署**：把项目跑在自己电脑上，可改代码、可看日志（需 Python 3.12 + Node 22）
+- **5.2 在线使用**：直接访问已部署的公网地址，无需安装任何环境（适合快速体验）
 
-### 1. 启动后端（端口 8080）
+---
+
+### 5.1 本地部署
+
+#### 5.1.1 环境要求
+
+| 依赖        | 版本要求                      | 说明                                                           |
+| --------- | ------------------------- | ------------------------------------------------------------ |
+| Python    | 3.12（3.11 亦可）             | 后端运行与建库                                                      |
+| Node.js   | `^22.18.0 \|\| >=24.12.0` | `package.json#engines` 强制要求，Node 20 及以下无法启动 Vite 8           |
+| 高德 Key ×2 | —                         | 一个「Web 服务」（后端查 POI/天气/距离），一个「Web 端(JS API)」（前端地图），**两者不能混用** |
+| 大模型 Key   | 任意 OpenAI 兼容端点            | 默认配置指向 DeepSeek                                              |
+| 数据库       | 无需安装                      | SQLite 由标准库自带，首次启动自动建库建表                                     |
+
+> **没有 Key 也能启动**：功能会自动降级但不报错，具体表现见 5.1.6。
+> 建议先用无 Key 方式确认「能跑起来」，再去申请 Key。
+
+#### 5.1.2 启动后端（端口 8080）
 
 ```bash
-# 进入后端目录
 cd backed
 
-# 创建并激活虚拟环境（Windows PowerShell）
+# 1) 建虚拟环境并激活
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-#   Windows CMD 写法： .venv\Scripts\activate.bat
-#   macOS/Linux 写法： source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1        # Windows PowerShell
+#   .venv\Scripts\activate.bat      # Windows CMD
+#   source .venv/bin/activate       # macOS / Linux
 
-# 安装依赖
+# 2) 安装依赖（仅 6 个包，无 numpy / torch）
 pip install -r requirements.txt
 
-# 复制并编辑环境变量（填入高德 Web 服务 Key 与 LLM Key）
-copy .env.example .env        # Windows
-# cp .env.example .env        # macOS/Linux
+# 3) 复制配置模板并填写 Key
+copy .env.example .env              # Windows
+# cp .env.example .env              # macOS / Linux
 
-# 启动（热重载，监听 0.0.0.0:8080）
+# 4) 启动（监听 0.0.0.0:8080，开发模式自动热重载）
 python run.py
 ```
 
-启动成功后可访问：
+启动成功的标志：
+
+```
+INFO:     Uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+```
+
+自检：浏览器打开 <http://localhost:8080/api/meta>，应返回一段 JSON。
 
 - 接口文档（Swagger UI）：<http://localhost:8080/docs>
-- 调试接口（浏览器直接打开即可看完整 JSON）：
-  <http://localhost:8080/api/debug/plan?city=杭州&days=3&budget=2000&tags=历史,自然,美食&profile=舒适型>
+- 调试接口（直接看完整行程 JSON，不经过前端）：
+  <http://localhost:8080/api/debug/plan?city=杭州&days=3&tags=历史,自然,美食&profile=经典>
 
-> **数据库无需手动初始化**：首次启动时 `lifespan` 会自动在 `backed/data/app.db` 建库建表（幂等）。
-> 想重置数据直接删掉该文件（含 `-wal` / `-shm`）重启即可。
+> **数据库无需手动初始化**：首次启动时 `lifespan` 自动在 `backed/data/app.db` 建库建表（幂等）。
+> 想重置数据，删掉该文件（含 `-wal` / `-shm`）后重启即可。
 >
-> **注册登录无需真实短信**：默认 `SMS_PROVIDER=dev`，验证码会打印在后端日志里，
-> 同时回显在 `/api/auth/send-code` 响应的 `data.debug_code` 字段，前端会自动填入输入框。
+> **登录方式是账号密码**（`POST /api/auth/register` 注册 → `POST /api/auth/login` 登录），
+> 不涉及短信通道，无需额外配置。未登录也能规划行程，只是历史记录只保存在本机。
 
-### 1.1 跑测试（可选）
-
-所有测试脚本都**不需要 pytest**，直接 `python` 运行：
+#### 5.1.3 启动前端（端口 5173）
 
 ```bash
-cd backed
-
-# 算法引擎 + 数据管线单测：绕路基点/预算/精确路径/必去硬约束/营业时间解析/灵感分类/请求合并/必去匹配/预算利用/导入抽取（离线，140 项）
-python tests/test_algorithms.py
-
-# 自然语言解析单测：规则兜底/白名单/范围夹取/JSON 抽取（离线，49 项）
-python tests/test_nl_parse.py
-
-# 用户系统 + 历史行程集成测试（进程内执行，不消耗高德/LLM 配额，54 项）
-python tests/test_auth_history.py
-
-# 针对运行中服务的真实 HTTP 冒烟（会真实调用 /api/plan，消耗配额，20 项）
-python tests/test_live_http.py
-```
-
-> `test_live_http.py` 会撞到短信 60 秒发送间隔，脚本已内置按提示等待重试，
-> 可以连续反复运行。
-
-### 1.2 重新生成参赛技术文档（可选）
-
-`docs/` 下的技术文档由脚本生成，改了代码或数据后可以一键重出：
-
-```bash
-# 1) 重新生成 6 张示意图（改了实测数据时才有必要）
-python docs/make_figures.py
-
-# 2) 生成 DOCX 并转 PDF（自动用两遍法算目录页码）
-python docs/build_all.py
-```
-
-> 目录页码为什么要两遍：LibreOffice 转换时**不会**填充 Word 的 TOC 域，
-> 所以脚本先按「封面 + 目录 + 前 k 章」逐级构建并取页数，得到每章起始页后再回填目录。
-> `build_all.py` 会同时报告总页数，超过大赛 30 页上限时会给出警告。
-
-### 2. 启动前端（端口 5173）
-
-```bash
-# 新开一个终端
+# 新开一个终端，后端保持运行
 cd fronted/travel
 
-# 安装依赖
 npm install
-# 国内网络拉 npmjs 超时/被重置时改用镜像：
+# 国内网络拉 npmjs 超时或被重置时改用镜像：
 # npm install --registry https://registry.npmmirror.com
 
-# 启动开发服务器
 npm run dev
 ```
 
-打开下面任一地址即可使用（**同一个 dev server，两个入口**）：
+前端通过 Vite 代理把 `/api` 请求转发到 `http://localhost:8080`（见 `vite.config.js`），
+**后端必须先启动**，否则接口全部 502/404。
 
-| 终端 | 地址 | 说明 |
-| --- | --- | --- |
-| 移动端 H5 | <http://localhost:5173/> | Vant 4，手机浏览器 / DevTools 移动视图 |
-| 桌面端 Web | <http://localhost:5173/pc/> | Element Plus，电脑浏览器，行程与地图左右并排 |
+#### 5.1.4 访问地址
 
-前端通过 Vite 代理把 `/api` 请求转发到 `http://localhost:8080`（见 `vite.config.js`），无需关心跨域。
+| 终端        | 地址                           | 说明                                 |
+| --------- | ---------------------------- | ---------------------------------- |
+| 移动端 H5    | <http://localhost:5173/>     | Vant 4，建议开 DevTools 切手机视图（390×844） |
+| 桌面端 Web   | <http://localhost:5173/pc/>  | Element Plus，宽屏布局，行程与地图左右并排        |
+| 后端 API 文档 | <http://localhost:8080/docs> | FastAPI 自动生成                       |
 
-> 前端地图 Key 配置见下一节，**不配置地图 Key 不影响行程生成**，只是行程页地图无法渲染。
+两个前端**共用同一个后端**，账号与历史行程互通。
 
-### 3. 生产构建（可选）
+#### 5.1.5 可选：不装 nginx 的本地托管
+
+`npm run dev` 是开发模式（热更新但慢）。想更接近线上效果、又不想装 nginx：
 
 ```bash
 cd fronted/travel
-npm run build      # 一次构建产出两个入口
-npm run preview    # 本地预览构建产物
+npm run build                       # 一次构建产出两个入口（build 前自动跑 check-refs）
+cd ../..
+python scripts/serve_local.py       # 标准库托管 dist + 反向代理 /api，跨平台零依赖
+python scripts/serve_local.py --port 8000 --backend 127.0.0.1:8080
 ```
 
-产物结构（`dist/` 直接丢到任意静态服务器即可，两个入口共用一份 `assets/`）：
+产物结构（`dist/` 可直接丢到任意静态服务器，两端共用一份 `assets/`）：
 
 ```
 dist/
 ├── index.html          # 移动端，部署在站点根路径 /
 ├── pc/
 │   └── index.html      # 桌面端，部署在 /pc/
-└── assets/             # 两端共用（各自独立的 js/css，互不干扰）
+└── assets/             # 两端各自独立的 js/css，互不干扰
 ```
 
 > **桌面端为什么用 hash 路由**：两端同工程同 `dist`，若桌面端也用 history 模式，
 > 刷新 `/pc/timeline` 会被静态服务器回退到移动端的 `index.html`。
 > hash 模式（`/pc/#/timeline`）不需要任何服务端 rewrite 规则，
-> 开发、预览、静态托管（含 GitHub Pages）都能直接用。
+> 开发、预览、静态托管都能直接用。移动端是 history 路由，因此**部署到服务器时必须配置 SPA 回退**
+> （见 5.2 的 nginx 说明）。
+
+#### 5.1.6 没有 Key 会怎样（降级表现）
+
+| 缺什么                         | 现象                                              | 是否报错 |
+| --------------------------- | ----------------------------------------------- | ---- |
+| 无 `LLM_API_KEY`             | AI 对话走确定性兜底：能按规则解析需求并出行程，但不能自由多轮对话；文案为未润色的结构化文本 | 不报错  |
+| `LLM_API_KEY` 仍是模板占位值       | 同上（调用返回 401 后降级）                                | 不报错  |
+| 无 `AMAP_KEY`                | 行程返回 `enhanced=false`：**没有真实景点名/评分/营业时间/天气**    | 不报错  |
+| 无 `VITE_AMAP_KEY`           | 地图区域白屏，页面提示「缺少高德 Web 端 Key」                     | 不报错  |
+| 无 `VITE_AMAP_SECURITY_CODE` | 地图加载被高德拒绝（2021.12 之后的 Key 必须配安全密钥）              | 不报错  |
+
+也就是说：**Key 不全时功能降级，但页面不会假装自己有数据。**
+
+#### 5.1.7 可选：跑测试
+
+13 套测试脚本、共 957 项断言，**不需要 pytest**（依赖里也没有），直接 `python` 运行：
+
+```bash
+cd backed
+
+python tests/test_algorithms.py          # 303 项：评分/分天/选点/路径/排程/数据富化
+python tests/test_nl_parse.py            #  43 项：规则兜底/白名单/范围夹取
+python tests/test_auth_history.py        #  62 项：注册登录/越权隔离/历史分页
+python tests/test_rag.py                 #  93 项：分词/切分/索引一致性/融合排序
+python tests/test_agent_tools.py         # 167 项：14 个工具的参数校验与越权
+python tests/test_degradation.py         #  22 项：七项降级演练
+```
+
+以上均为离线执行，不联网、不消耗高德或大模型配额。
+`tests/test_live_http.py`（65 项）针对**已启动的服务**做真实 HTTP 冒烟，会实际调用 `/api/plan` 消耗配额，
+需要先 `python run.py` 再运行。
+
+---
+
+### 5.2 在线使用
+
+如果不想在本地安装任何环境，可直接访问已部署的服务：
+
+| 终端      | 地址                          | 说明                                 |
+| ------- | --------------------------- | ---------------------------------- |
+| 移动端 H5  | <http://106.14.63.197/>     | 建议用手机浏览器，或 DevTools 切移动视图（390×844） |
+| 桌面端 Web | <http://106.14.63.197/pc/>  | 宽屏布局，行程与地图左右并排                     |
+| 接口文档    | <http://106.14.63.197/docs> | Swagger UI，可直接试调用                  |
+
+> 若上述服务已到期或访问不通，请改用 **5.1 本地部署**。
+> 评审期间若需长期可用，可与维护者联系确认服务状态。
+
+**测试账号**（可直接注册新账号，也可使用下列预置账号）：
+
+```
+账号：zhangsan
+密码：123456
+```
+
+**与服务端部署的差异**：在线服务使用 nginx 托管 `dist/` 并反向代理 `/api`，
+因此移动端可正常使用 history 路由。若你自己部署到服务器，nginx 需满足四项要求：
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    # ① 图片导入允许 8MB，nginx 默认 1MB 会直接 413
+    client_max_body_size 20m;
+
+    root /var/www/travel;
+    index index.html;
+
+    # ② 移动端是 history 路由，缺 SPA 回退会导致刷新 404
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+
+        # ③ SSE 必须关闭缓冲，否则 Agent 思考链被攒到最后一次性吐出
+        proxy_buffering off;
+        proxy_cache off;
+
+        # ④ 规划与识图可达 180 秒，默认 60 秒会 504
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+**补充说明**：更细的换机部署流程（Key 申请路径截图级说明、局域网让手机访问、逐条常见问题）
+详见随提交材料提供的《本地部署指南》。仓库内不复带此文件，按上面 5.1 的步骤同样可以完成部署。
 
 ---
 
@@ -532,24 +609,24 @@ dist/
 
 后端配置文件为 `backed/.env`（从 `.env.example` 复制）。所有变量均可被系统环境变量覆盖。
 
-| 变量名 | 说明 | 默认值 |
-| --- | --- | --- |
-| `LLM_API_KEY` | 大模型 API 密钥 | 空（**不硬编码默认值**，必须由 `.env` 提供） |
-| `LLM_BASE_URL` | 大模型服务地址（任何 OpenAI 兼容端点均可） | `https://api.siliconflow.cn` |
-| `LLM_MODEL` | 模型名 | `deepseek-ai/DeepSeek-V4-Pro` |
-| `AMAP_KEY` | 高德 **Web 服务** Key（后端 REST 调用用） | 空（为空时走降级模式） |
-| `AMAP_BASE` | 高德 REST 基地址 | `https://restapi.amap.com/v3` |
-| `POI_CACHE_TTL` | POI 缓存有效期（秒） | `86400`（24 小时） |
-| `MATRIX_CACHE_TTL` | 交通矩阵缓存有效期（秒） | `604800`（7 天） |
-| `PORT` | 后端服务端口 | `8080` |
-| `DB_PATH` | SQLite 数据库文件路径（相对路径按 `backed/` 解析，留空用默认） | `data/app.db` |
-| `TOKEN_TTL_DAYS` | 登录 token 有效期（天） | `30` |
-| `SMS_PROVIDER` | 短信通道：`dev` / `aliyun` / `tencent` | `dev` |
-| `SMS_CODE_TTL` | 验证码有效期（秒） | `300` |
-| `SMS_SEND_INTERVAL` | 同一手机号两次发送的最小间隔（秒） | `60` |
-| `SMS_HOURLY_LIMIT` | 同一手机号每小时最多发送次数 | `10` |
-| `SMS_MAX_ATTEMPTS` | 单个验证码最多允许校验失败次数 | `5` |
-| `SMS_DEBUG_ECHO` | dev 模式下是否把验证码回显到接口响应（**生产必须 false**） | `true` |
+| 变量名                    | 说明                                       | 默认值                           |
+| ---------------------- | ---------------------------------------- | ----------------------------- |
+| `LLM_API_KEY`          | 大模型 API 密钥                               | 空（**不硬编码默认值**，必须由 `.env` 提供）  |
+| `LLM_BASE_URL`         | 大模型服务地址（任何 OpenAI 兼容端点均可）                | `https://api.siliconflow.cn`  |
+| `LLM_MODEL`            | 模型名                                      | `deepseek-ai/DeepSeek-V4-Pro` |
+| `AMAP_KEY`             | 高德 **Web 服务** Key（后端 REST 调用用）           | 空（为空时走降级模式）                   |
+| `AMAP_BASE`            | 高德 REST 基地址                              | `https://restapi.amap.com/v3` |
+| `POI_CACHE_TTL`        | POI 缓存有效期（秒）                             | `86400`（24 小时）                |
+| `MATRIX_CACHE_TTL`     | 交通矩阵缓存有效期（秒）                             | `604800`（7 天）                 |
+| `PORT`                 | 后端服务端口                                   | `8080`                        |
+| `DB_PATH`              | SQLite 数据库文件路径（相对路径按 `backed/` 解析，留空用默认） | `data/app.db`                 |
+| `TOKEN_TTL_DAYS`       | 登录 token 有效期（天）                          | `30`                          |
+| `RAG_ENABLED`          | 是否启用知识库检索                                | `true`                        |
+| `RAG_TOP_K`            | 检索最终返回片段数                                | `5`                           |
+| `RAG_RECALL_K`         | 单路召回条数（BM25 与向量各取）                       | `30`                          |
+| `AGENT_MAX_ROUNDS`     | Agent 主循环最大轮数                            | `6`                           |
+| `AGENT_MAX_TOOL_CALLS` | 单次会话工具调用上限                               | `8`                           |
+| `AGENT_MAX_SECONDS`    | 单次会话时长上限（秒）                              | `50`                          |
 
 > 表中"默认值"是**代码在完全没有 `.env` 时的兜底值**（见 `app/config.py`）。实际运行时以 `.env` 为准。
 
@@ -558,10 +635,10 @@ dist/
 Key 和接口地址不属于同一家平台时，调用会返回 `401 {"code":30014,"message":"Token is invalid."}`。
 两家的 Key 格式可以直接区分：
 
-| 平台 | Key 格式 | `LLM_BASE_URL` | `LLM_MODEL` |
-| --- | --- | --- | --- |
-| DeepSeek 官方（platform.deepseek.com） | `sk-` + 32 位十六进制（共 35 字符） | `https://api.deepseek.com` | `deepseek-chat` |
-| 硅基流动 SiliconFlow | `sk-` + 48 位字母数字（共 51 字符） | `https://api.siliconflow.cn` | `deepseek-ai/DeepSeek-V4-Pro` |
+| 平台                                 | Key 格式                    | `LLM_BASE_URL`               | `LLM_MODEL`                   |
+| ---------------------------------- | ------------------------- | ---------------------------- | ----------------------------- |
+| DeepSeek 官方（platform.deepseek.com） | `sk-` + 32 位十六进制（共 35 字符） | `https://api.deepseek.com`   | `deepseek-chat`               |
+| 硅基流动 SiliconFlow                   | `sk-` + 48 位字母数字（共 51 字符） | `https://api.siliconflow.cn` | `deepseek-ai/DeepSeek-V4-Pro` |
 
 只要服务是 OpenAI 兼容的 `/v1/chat/completions`，换任何一家都可以。项目当前使用并已验证的是 **DeepSeek 官方**这一组。
 
@@ -586,14 +663,15 @@ DB_PATH=
 # 登录态有效期
 TOKEN_TTL_DAYS=30
 
-# 短信：dev = 不真发短信，验证码写日志并回显（本地开发/答辩演示用）
-SMS_PROVIDER=dev
-SMS_DEBUG_ECHO=true
+# 检索与 Agent 运行预算（轮数/时长上限，非费用预算；可留空用默认值）
+RAG_ENABLED=true
+AGENT_MAX_ROUNDS=6
 ```
 
-> **安全提示**：密钥一律通过**不入库的环境变量文件**配置——后端用 `backed/.env`，前端用 `fronted/travel/.env.local`（两者均已被 `.gitignore` 忽略）。源码中不存在任何硬编码密钥，可安全公开仓库。`.gitignore` 同时忽略 `.venv/`、`*.db`、`backed/cache/`。仍建议在高德 / SiliconFlow 控制台配置配额与用量告警。
+> **安全提示**：密钥一律通过**不入库的环境变量文件**配置——后端用 `backed/.env`，前端用 `fronted/travel/.env.local`（两者均已被 `.gitignore` 忽略）。.gitignore` 同时忽略 `.venv/`、`*.db`、`backed/cache/`。
 >
-> **上线前必须做两件事**：把 `SMS_PROVIDER` 换成真实通道，并把 `SMS_DEBUG_ECHO` 设为 `false`，否则验证码会随响应返回给任意调用者。
+> **上线前建议**：在高德与 SiliconFlow / DeepSeek 控制台配置**配额与用量告警**，并按需收紧高德 Key 的
+> 域名白名单与 IP 白名单——前端 `VITE_AMAP_*` 会被内联进构建产物，属于可公开但应限制来源的 Key。
 
 ---
 
@@ -601,10 +679,10 @@ SMS_DEBUG_ECHO=true
 
 本项目同时使用了高德的**两套 Key**，容易混淆，请按下表分别申请：
 
-| Key 类型 | 使用方 | 申请位置 | 配置位置 |
-| --- | --- | --- | --- |
-| **Web 服务** Key | 后端服务器（REST） | 控制台 → 应用管理 → 添加 Key → 服务平台选「Web服务」 | `backed/.env` 的 `AMAP_KEY` |
-| **Web 端 (JS API)** Key + 安全密钥 `securityJsCode` | 浏览器前端地图 | 控制台 → 应用管理 → 添加 Key → 服务平台选「Web端(JS API)」 | `fronted/travel/.env.local` 的 `VITE_AMAP_KEY` |
+| Key 类型                                         | 使用方         | 申请位置                                      | 配置位置                                          |
+| ---------------------------------------------- | ----------- | ----------------------------------------- | --------------------------------------------- |
+| **Web 服务** Key                                 | 后端服务器（REST） | 控制台 → 应用管理 → 添加 Key → 服务平台选「Web服务」        | `backed/.env` 的 `AMAP_KEY`                    |
+| **Web 端 (JS API)** Key + 安全密钥 `securityJsCode` | 浏览器前端地图     | 控制台 → 应用管理 → 添加 Key → 服务平台选「Web端(JS API)」 | `fronted/travel/.env.local` 的 `VITE_AMAP_KEY` |
 
 ### 1. 后端 Web 服务 Key
 
@@ -676,30 +754,30 @@ if (AMAP_VISUAL_ID) new AMap.Visual('amap://visual/' + AMAP_VISUAL_ID, map)
 
 **全部路由共 31 个**，本节详述核心链路。其余分组见下表，参数以 `backed/app/schemas.py` 为准：
 
-| 分组 | 路由 |
-| --- | --- |
-| 认证 | `/api/auth/{register, login, me, logout}` |
-| 历史 | `/api/history`（列表 / 保存）、`/api/history/import`、`/api/history/{id}`（详情 / 删除） |
-| 规划 | `/api/plan`、`/api/parse`、`/api/debug/plan` |
-| 导入 | `/api/import/text`、`/api/import/image` |
-| 视觉 | `/api/vision/recognize` |
-| 旁路 | `/api/inspiration`、`/api/intercity`、`/api/map/thumbnail` |
-| 知识库 | `/api/kb/{stats, files, reindex, upload, search}` |
+| 分组    | 路由                                                                                                             |
+| ----- | -------------------------------------------------------------------------------------------------------------- |
+| 认证    | `/api/auth/{register, login, me, logout}`                                                                      |
+| 历史    | `/api/history`（列表 / 保存）、`/api/history/import`、`/api/history/{id}`（详情 / 删除）                                     |
+| 规划    | `/api/plan`、`/api/parse`、`/api/debug/plan`                                                                     |
+| 导入    | `/api/import/text`、`/api/import/image`                                                                         |
+| 视觉    | `/api/vision/recognize`                                                                                        |
+| 旁路    | `/api/inspiration`、`/api/intercity`、`/api/map/thumbnail`                                                       |
+| 知识库   | `/api/kb/{stats, files, reindex, upload, search}`                                                              |
 | Agent | `/api/agent/chat`（SSE）、`/api/agent/tools`、`/api/agent/sessions`、`/api/agent/session/{id}`、`/api/agent/profile` |
-| 元数据 | `/api/meta`（标签 / 风格 / 天数上下限 / 城市清单，前端唯一来源） |
+| 元数据   | `/api/meta`（标签 / 风格 / 天数上下限 / 城市清单，前端唯一来源）                                                                     |
 
 ### 1. POST `/api/plan` —— 算法引擎行程规划（核心）
 
 **请求体 `PlanRequestDTO`**
 
-| 字段 | 类型 | 必填 | 约束 | 说明 |
-| --- | --- | --- | --- | --- |
-| `city` | string | 是 | — | 目的地城市，如 `杭州` |
-| `days` | int | 是 | 1–30 | 旅行天数 |
-| `tags` | string[] | 是 | 取值见下 | 兴趣标签 |
-| `must_go` | string[] | 否 | — | 必去景点名称（强制加入） |
-| `avoid` | string[] | 否 | — | 规避景点名称（过滤） |
-| `profile` | string | 否 | — | `经济型` / `舒适型`（默认）/ `紧凑型` |
+| 字段        | 类型       | 必填  | 约束   | 说明                       |
+| --------- | -------- | --- | ---- | ------------------------ |
+| `city`    | string   | 是   | —    | 目的地城市，如 `杭州`             |
+| `days`    | int      | 是   | 1–30 | 旅行天数                     |
+| `tags`    | string[] | 是   | 取值见下 | 兴趣标签                     |
+| `must_go` | string[] | 否   | —    | 必去景点名称（强制加入）             |
+| `avoid`   | string[] | 否   | —    | 规避景点名称（过滤）               |
+| `profile` | string   | 否   | —    | `经济型` / `舒适型`（默认）/ `紧凑型` |
 
 - `tags` 可选值：`历史`、`自然`、`美食`、`购物`、`艺术`、`夜生活`
 
@@ -739,7 +817,7 @@ curl -X POST http://localhost:8080/api/plan \
 GET 形式方便直接在浏览器查看完整结果，参数通过 query 传递（`tags` 用逗号分隔）：
 
 ```
-GET /api/debug/plan?city=杭州&days=3&budget=2000&tags=历史,自然,美食&profile=舒适型
+GET /api/debug/plan?city=杭州&days=3&tags=历史,自然,美食&profile=经典
 ```
 
 返回 `{ success, amap_enabled, request, itinerary }`。
@@ -750,15 +828,15 @@ GET /api/debug/plan?city=杭州&days=3&budget=2000&tags=历史,自然,美食&pro
 
 **请求体 `ParseRequestDTO`**
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `text` | string | 是 | 用户自然语言描述，1–500 字 |
-| `defaults` | PlanRequestDTO | 否 | 兜底值（如表单已填内容）；文本中没提到的字段沿用它 |
+| 字段         | 类型             | 必填  | 说明                        |
+| ---------- | -------------- | --- | ------------------------- |
+| `text`     | string         | 是   | 用户自然语言描述，1–500 字          |
+| `defaults` | PlanRequestDTO | 否   | 兜底值（如表单已填内容）；文本中没提到的字段沿用它 |
 
 ```bash
 curl -X POST http://localhost:8080/api/parse \
   -H "Content-Type: application/json" \
-  -d '{"text":"带爸妈去苏州玩三天，预算2500，喜欢历史和园林，轻松点"}'
+  -d '{"text":"带爸妈去苏州玩三天，喜欢历史和园林，轻松点"}'
 ```
 
 **响应 `data` 为 `ParsedPlanVO`**：
@@ -769,7 +847,7 @@ curl -X POST http://localhost:8080/api/parse \
     "city": "苏州", "days": 3, "budget": 2500.0,
     "tags": ["历史"], "must_go": [], "avoid": [], "profile": "舒适型"
   },
-  "inferred": ["目的地", "天数", "预算", "兴趣偏好", "出行节奏"],  // 真正从文本识别的
+  "inferred": ["目的地", "天数", "兴趣偏好", "出行节奏", "同行人"],  // 真正从文本识别的
   "assumed": [],                      // 文本没提到、用了默认值的
   "notes": [],                        // 越界夹取、降级解析等提示
   "source": "llm",                    // llm | rule
@@ -780,7 +858,7 @@ curl -X POST http://localhost:8080/api/parse \
 **三道防线保证 LLM 不能乱来**（详见第十六节）：
 
 1. **白名单**：`tags` 只能取 `VALID_TAGS`，`profile` 只能取 `VALID_PROFILES`；
-2. **范围夹取**：天数夹到 1–7、预算不低于 100，且把夹取动作回报在 `notes` 里；
+2. **范围夹取**：天数夹到 1–30，且把夹取动作回报在 `notes` 里；
 3. **规则兜底**：LLM 不可用或返回不可解析时，退回正则 + 城市表的确定性解析
    （`source` 变为 `rule`，并在 `notes` 里说明），弱网/断网也能用。
 
@@ -792,12 +870,12 @@ curl -X POST http://localhost:8080/api/parse \
 
 **请求体 `RegisterDTO`**
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `username` | string | 是 | 3–20 位，字母 / 数字 / 下划线 / 中文；归一为小写存储 |
-| `password` | string | 是 | 6–64 位；以 `pbkdf2-sha256` + 独立 salt + 20 万次迭代存哈希 |
-| `nickname` | string | 否 | 最长 20 字符，缺省等于 `username` |
-| `avatar` | string | 否 | 头像 URL |
+| 字段         | 类型     | 必填  | 说明                                              |
+| ---------- | ------ | --- | ----------------------------------------------- |
+| `username` | string | 是   | 3–20 位，字母 / 数字 / 下划线 / 中文；归一为小写存储               |
+| `password` | string | 是   | 6–64 位；以 `pbkdf2-sha256` + 独立 salt + 20 万次迭代存哈希 |
+| `nickname` | string | 否   | 最长 20 字符，缺省等于 `username`                        |
+| `avatar`   | string | 否   | 头像 URL                                          |
 
 **响应 `data` 为 `AuthVO`**：`{ token, expires_in, user: { id, username, nickname, avatar, created_at, last_login_at } }`
 
@@ -858,13 +936,13 @@ curl -X POST http://localhost:8080/api/parse \
 
 需要登录。**请求体 `HistorySaveDTO`**：
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `request` | PlanRequestDTO | 是 | 当时的规划入参 |
-| `itinerary` | ItineraryVO | 是 | 算法产出的完整行程 |
-| `client_id` | string | 否 | 前端本机记录 id，**同一用户下唯一**，重复提交为覆盖更新 |
-| `title` / `origin` | string | 否 | 缺省标题按 `{origin}出发·{city}{days}日游` 生成 |
-| `created_at` | string | 否 | ISO-8601，缺省用服务端当前时间 |
+| 字段                 | 类型             | 必填  | 说明                                   |
+| ------------------ | -------------- | --- | ------------------------------------ |
+| `request`          | PlanRequestDTO | 是   | 当时的规划入参                              |
+| `itinerary`        | ItineraryVO    | 是   | 算法产出的完整行程                            |
+| `client_id`        | string         | 否   | 前端本机记录 id，**同一用户下唯一**，重复提交为覆盖更新      |
+| `title` / `origin` | string         | 否   | 缺省标题按 `{origin}出发·{city}{days}日游` 生成 |
+| `created_at`       | string         | 否   | ISO-8601，缺省用服务端当前时间                  |
 
 后端**不对行程做任何二次加工**，只搬运算法原文。
 
@@ -1046,8 +1124,8 @@ curl -X POST http://localhost:8080/api/parse \
 { "success": false, "code": 401, "message": "未登录或登录态已失效，请重新登录", "data": null }
 ```
 
-常见 `code`：`400` 参数/验证码错误、`401` 未登录或 token 失效、`404` 用户未注册或资源不存在、
-`409` 手机号已注册、`429` 发送过于频繁、`500` 历史数据损坏、`501` 短信通道未接入、`502` 短信下发失败。
+常见 `code`：`400` 参数非法（含越界夹取失败）、`401` 未登录或 token 失效、`404` 资源不存在或无权访问、
+`409` 唯一约束冲突（如账号已被占用）、`429` 频率限制、`500` 内部错误、`502` 外部服务失败但已降级。
 
 ---
 
@@ -1101,22 +1179,22 @@ curl -X POST http://localhost:8080/api/parse \
 > 原因是门票语料覆盖仅 23.8%、住宿完全未接入 —— 输出一个「总花费」等于声称一个算不准的数字。
 > 单点 `cost` 仍保留，但**只在 `cost_source` 有真实来源时才有值**（`average` / `unknown` 一律为 `null`，只给文字备注）。
 
-| 模型 | 文件 | 说明 |
-| --- | --- | --- |
-| `PlanRequestDTO` | `app/schemas.py` | 规划入参 |
-| `ItineraryVO` | 同上 | 完整行程出参 |
-| `DailyPlan` | 同上 | 单日行程 |
-| `ItineraryItem` | 同上 | 单个景点/餐厅/酒店 |
-| `ScoreBreakdown` | 同上 | 四维评分 |
-| `Transport` | 同上 | 景点间交通 |
-| `Result` | 同上 | 统一响应包装 |
-| `SendCodeDTO` / `SendCodeVO` | 同上 | 发送验证码 |
-| `RegisterDTO` / `LoginDTO` | 同上 | 注册 / 登录入参 |
-| `UserVO` / `AuthVO` | 同上 | 用户信息 / 登录凭证 |
-| `HistorySaveDTO` | 同上 | 保存历史行程入参 |
-| `HistoryItemVO` / `HistoryDetailVO` | 同上 | 历史列表项 / 详情 |
-| `HistoryListVO` / `HistoryImportDTO` / `HistoryImportVO` | 同上 | 历史分页、批量导入入参与结果 |
-| `ApiError` | `app/errors.py` | 业务异常（统一被 handler 包成 `Result` 形态） |
+| 模型                                                       | 文件               | 说明                               |
+| -------------------------------------------------------- | ---------------- | -------------------------------- |
+| `PlanRequestDTO`                                         | `app/schemas.py` | 规划入参                             |
+| `ItineraryVO`                                            | 同上               | 完整行程出参                           |
+| `DailyPlan`                                              | 同上               | 单日行程                             |
+| `ItineraryItem`                                          | 同上               | 单个景点/餐厅/酒店                       |
+| `ScoreBreakdown`                                         | 同上               | 三维评分（兴趣/口碑/绕路）                   |
+| `Transport`                                              | 同上               | 景点间交通                            |
+| `Result`                                                 | 同上               | 统一响应包装                           |
+| `SendCodeDTO` / `SendCodeVO`                             | 同上               | **已下线**：短信验证码接口返回 404，类定义仅作兼容保留  |
+| `RegisterDTO` / `LoginDTO`                               | 同上               | 注册 / 登录入参                        |
+| `UserVO` / `AuthVO`                                      | 同上               | 用户信息 / 登录凭证                      |
+| `HistorySaveDTO`                                         | 同上               | 保存历史行程入参                         |
+| `HistoryItemVO` / `HistoryDetailVO`                      | 同上               | 历史列表项 / 详情                       |
+| `HistoryListVO` / `HistoryImportDTO` / `HistoryImportVO` | 同上               | 历史分页、批量导入入参与结果                   |
+| `ApiError`                                               | `app/errors.py`  | 业务异常（统一被 handler 包成 `Result` 形态） |
 
 ---
 
@@ -1127,38 +1205,38 @@ curl -X POST http://localhost:8080/api/parse \
 
 ### 移动端 H5（Vant 4，访问 `/`）
 
-| 路由 | 文件 | 功能 |
-| --- | --- | --- |
-| `/` | `views/Home.vue` | 首页：一句话规划、出发地/目的地输入、热门目的地轮播卡、天数预算偏好弹层、渐变规划按钮、历史线路（登录后展示账号下的行程）、未登录时显示登录引导 |
+| 路由          | 文件                   | 功能                                                                                       |
+| ----------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| `/`         | `views/Home.vue`     | 首页：一句话规划、出发地/目的地输入、热门目的地轮播卡、天数 / 节奏偏好弹层、渐变规划按钮、历史线路（登录后展示账号下的行程）、未登录时显示登录引导              |
 | `/timeline` | `views/Timeline.vue` | 行程结果页：全屏高德地图 + 可拖拽 Bottom Sheet；带 `history_id` 参数时为**回看模式**（直接读后端历史，不重新规划）；新生成的行程会在渲染后落库 |
-| `/chat` | `views/Chat.vue` | SSE 流式 AI 对话 |
-| `/mine` | `views/Mine.vue` | 个人中心：真实用户昵称与脱敏手机号、行程数量、菜单入口、退出登录 |
-| `/login` | `views/Login.vue` | 手机号验证码登录 / 注册（两 Tab 切换、60 秒倒计时、dev 模式自动填入验证码）；不显示底部 tabbar |
-| `/history` | `views/History.vue` | 我的行程：分页列表、下拉刷新、点击回看、左滑删除；未登录时展示登录引导 |
+| `/chat`     | `views/Chat.vue`     | SSE 流式 AI 对话                                                                             |
+| `/mine`     | `views/Mine.vue`     | 个人中心：账号名与昵称、行程数量、菜单入口、退出登录                                                               |
+| `/login`    | `views/Login.vue`    | 账号密码登录 / 注册（两 Tab 切换）；不显示底部 tabbar                                                       |
+| `/history`  | `views/History.vue`  | 我的行程：分页列表、下拉刷新、点击回看、左滑删除；未登录时展示登录引导                                                      |
 
 ### 桌面端 Web（Element Plus 2，访问 `/pc/`）
 
 路由用 **hash 模式**（`/pc/#/timeline`），原因见第五节「生产构建」。
 
-| 路由 | 文件 | 功能 |
-| --- | --- | --- |
-| `/pc/#/` | `pc/views/Home.vue` | 左侧规划表单（一句话规划解析 + 参数表单 + **导入线路/地点**），右侧本机/账号行程列表与热门目的地 |
-| `/pc/#/timeline` | `pc/views/Timeline.vue` | **桌面端核心布局**：左侧 460px 行程面板（**「行程 / 灵感」双 Tab** + 每日景点卡 + 四维评分进度条 + 交通信息），右侧全幅高德地图；顶部「全部 / D1 / D2…」切换同步过滤地图覆盖物；生成等待期用灵感卡片填住 |
-| `/pc/#/chat` | `pc/views/Chat.vue` | SSE 流式对话 + 常用问题侧栏 + 分工说明 |
-| `/pc/#/history` | `pc/views/History.vue` | `el-table` 分页表格（标题/路线/天数/安排数/预算/花费/节奏/时间）+ 查看、删除 |
-| `/pc/#/login` | `pc/views/Login.vue` | 居中登录卡片，`el-tabs` 切换注册 / 登录 |
-| `/pc/#/mine` | `pc/views/Mine.vue` | 账号卡片 + 四项统计（行程数、总花费、高德状态、短信通道）+ 项目说明表 |
+| 路由               | 文件                      | 功能                                                                                                                        |
+| ---------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `/pc/#/`         | `pc/views/Home.vue`     | 左侧规划表单（一句话规划解析 + 参数表单 + **导入线路/地点**），右侧本机/账号行程列表与热门目的地                                                                    |
+| `/pc/#/timeline` | `pc/views/Timeline.vue` | **桌面端核心布局**：左侧 460px 行程面板（**「行程 / 灵感」双 Tab** + 每日景点卡 + 三维评分进度条 + 交通信息），右侧全幅高德地图；顶部「全部 / D1 / D2…」切换同步过滤地图覆盖物；生成等待期用灵感卡片填住 |
+| `/pc/#/chat`     | `pc/views/Chat.vue`     | SSE 流式对话 + 常用问题侧栏 + 分工说明                                                                                                  |
+| `/pc/#/history`  | `pc/views/History.vue`  | `el-table` 分页表格（标题/路线/天数/安排数/节奏/时间）+ 查看、删除                                                                                |
+| `/pc/#/login`    | `pc/views/Login.vue`    | 居中登录卡片，`el-tabs` 切换注册 / 登录                                                                                                |
+| `/pc/#/mine`     | `pc/views/Mine.vue`     | 账号卡片 + 四项统计（行程数、总花费、高德状态、检索状态）+ 项目说明表                                                                                     |
 
 **桌面端与移动端的差异设计**
 
-| | 移动端 | 桌面端 |
-| --- | --- | --- |
-| 地图与行程的关系 | 上下分层，Bottom Sheet 三档吸附拖拽 | **左右并排**，地图常驻全幅，不需要拖拽 |
-| 评分可解释性 | 卡片内文字标签 | **四维评分进度条**并排展示，一眼看出为什么推荐这个点 |
-| 行程列表 | 竖向卡片流 | `el-collapse` + 表格化信息密度 |
-| 路由 | history（`/timeline`） | hash（`/pc/#/timeline`），静态托管零配置 |
-| 导入线路/地点 | `van-popup` 底部弹层 | `el-dialog` 弹窗，结果用 `el-tag` 勾选 |
-| 旅行灵感流 | 生成等待页 + 「旅行灵感」Tab | 生成等待页 + 左侧面板「行程 / 灵感」双 Tab（同一个共用组件） |
+|          | 移动端                      | 桌面端                                 |
+| -------- | ------------------------ | ----------------------------------- |
+| 地图与行程的关系 | 上下分层，Bottom Sheet 三档吸附拖拽 | **左右并排**，地图常驻全幅，不需要拖拽               |
+| 评分可解释性   | 卡片内文字标签                  | **三维评分进度条**并排展示，一眼看出为什么推荐这个点        |
+| 行程列表     | 竖向卡片流                    | `el-collapse` + 表格化信息密度             |
+| 路由       | history（`/timeline`）     | hash（`/pc/#/timeline`），静态托管零配置      |
+| 导入线路/地点  | `van-popup` 底部弹层         | `el-dialog` 弹窗，结果用 `el-tag` 勾选      |
+| 旅行灵感流    | 生成等待页 + 「旅行灵感」Tab        | 生成等待页 + 左侧面板「行程 / 灵感」双 Tab（同一个共用组件） |
 
 > **共用一件组件**：`src/components/InspirationCards.vue` 刻意只用原生 HTML/CSS、不依赖任何
 > Vant 或 Element Plus 组件，因此两端可以直接复用，只有外层宽度与容器不同。
@@ -1197,14 +1275,14 @@ curl -X POST http://localhost:8080/api/parse \
 
 `search_pois()` 提取的字段：
 
-| 字段 | 来源 | 用途 |
-| --- | --- | --- |
-| `rating` | `biz_ext.rating`（150/150 有值） | 四维评分里的「口碑」维度 |
-| `open_time` / `open_time_text` | `biz_ext.open_time` / `opentime2` | 真实营业时间，作为排程硬约束 |
-| `biz_cost` | `biz_ext.cost` | 餐饮类真实人均消费（实测 24/25 有值）；**景区类为空，门票仍需估算** |
-| `category` | `type`（中文三级分类） | 提取景区等级，如「国家级景点」 |
-| `business_area` | `business_area` | 商圈，酒店选址用 |
-| `photos` / `entr_location` | 同名顶层字段 | 前端展示 / 景区出入口坐标 |
+| 字段                             | 来源                                | 用途                                      |
+| ------------------------------ | --------------------------------- | --------------------------------------- |
+| `rating`                       | `biz_ext.rating`（150/150 有值）      | 三维评分里的「口碑」维度                            |
+| `open_time` / `open_time_text` | `biz_ext.open_time` / `opentime2` | 真实营业时间，作为排程硬约束                          |
+| `biz_cost`                     | `biz_ext.cost`                    | 餐饮类真实人均消费（实测 24/25 有值）；**景区类为空，门票仍需估算** |
+| `category`                     | `type`（中文三级分类）                    | 提取景区等级，如「国家级景点」                         |
+| `business_area`                | `business_area`                   | 商圈，酒店选址用                                |
+| `photos` / `entr_location`     | 同名顶层字段                            | 前端展示 / 景区出入口坐标                          |
 
 `data_loader.py` 在此基础上做语义富化：
 
@@ -1234,69 +1312,47 @@ curl -X POST http://localhost:8080/api/parse \
 - 距离用经纬度欧氏距离（聚类初筛足够），纯 Python 无 numpy；
 - 把候选 POI 聚成 `days` 簇，对应每天的游玩区域，减少跨城往返。
 
-### 4. 加权评分（models.py）
+### 4. 三维加权评分（models.py）
 
-每个 POI 四个维度归一化到 [0,1]：
-
-- `interest`：POI 标签与用户标签的匹配度（用户每个标签权重 1/N）；
-- `rating`：高德评分 [3,5] 线性映射到 [0,1]；
-- `detour`：到**参考基点**的 Haversine 距离 / 单日最大绕路（15km）。
-  参考基点分两个阶段（这是修复过的一个坑）：
-  - **选点阶段**顺序未知，用当日候选池的**聚类中心**——距离即"该点相对当日活动区域中心的偏移"，
-    是绕路成本的顺序无关估计；
-  - **排序之后**用真实的上一个点，反映实际游览顺序下的绕路。
-- `cost`：POI 费用 / 当日预算。
-
-综合评分：
+三个维度各自归一化到 [0,1]，再按出行风格加权求和：
 
 ```
-score = w_interest·interest + w_rating·rating − w_detour·detour − w_cost·cost
+score = w_interest * interest + w_rating * rating - w_detour * detour
 ```
 
-三套 profile 权重（权重和约为 1）：
+| 维度         | 含义                       | 归一化方式                      |
+| ---------- | ------------------------ | -------------------------- |
+| `interest` | 标签与用户兴趣的匹配度              | 命中标签权重 / 最高权重              |
+| `rating`   | 高德口碑（取 `biz_ext.rating`） | 4.0→0、4.5→0.5、4.9→0.9 线性插值 |
+| `detour`   | 绕路成本（离当日质心越远越高）          | 距离 / 城市对角线归一值              |
 
-| Profile | w_interest | w_rating | w_detour | w_cost | 倾向 |
-| --- | --- | --- | --- | --- | --- |
-| 经济型 | 0.25 | 0.15 | 0.20 | **0.40** | 省钱优先 |
-| 舒适型 | **0.40** | **0.30** | 0.20 | 0.10 | 兴趣与口碑优先 |
-| 紧凑型 | 0.30 | 0.20 | **0.40** | 0.10 | 少绕路、节奏紧 |
+三套出行风格对应不同权重与每日时间窗：
 
-切换 profile 会真实改变选点与排序，而不是只换文案——这也是"多方案"的实现方式（刻意避免 Pareto 前沿等难以答辩的复杂概念）。
+| 风格  | 兴趣   | 口碑   | 绕路   | 每日时间窗         |
+| --- | ---- | ---- | ---- | ------------- |
+| 悠闲  | 0.50 | 0.30 | 0.20 | 10:00 – 18:00 |
+| 经典  | 0.40 | 0.40 | 0.20 | 09:00 – 19:00 |
+| 尽览  | 0.30 | 0.20 | 0.50 | 08:30 – 21:00 |
 
-> **已修复的历史缺陷（同一类问题出现两次，都是"函数对了但数据流断了"）**：
+> **口碑下界为什么是 4.0**：实测 80.6% 的真实 POI 评分 ≥ 4.0。若以 3.0 为下界，整条评分轴会被压进 0.65–0.95 的窄带——名义上参与打分，实际几乎不影响排序。
 >
-> 1. **绕路维度失效**：早期 `engine.py` 在选点阶段恒传 `last_lat=0.0`，
->    而 `compute_score` 用真值判断（`if last_lat`）决定是否计算绕路，
->    于是 `detour` 恒为 0、`w_detour` 整项失效——「紧凑型」的 0.40 权重完全没起作用。
->    现在改为 `Optional` + `is None` 判断，并在选点阶段传入聚类中心。
-> 2. **口碑维度失效**：`search_pois` 读的是高德顶层的 `rating`，而实测 150 条抽样中
->    顶层 `rating` **全部为 null**，真实评分在 `biz_ext.rating`（150/150 有值）。
->    结果是 `rating_norm(0)=0`，`w_rating`（舒适型的 0.30）完全不参与打分——
->    **四维评分曾经只有两维是真的**。现已改读 `biz_ext.rating`，实测真实规划中
->    rating 维度 10/10 非零（0.75~0.90）。
->
-> 这两个缺陷暴露了同一个测试盲区：单测用构造数据验证了**函数**，却没有验证**真实数据管线**。
-> 现已补上 `POI.from_amap` 的字段映射回归测试（第 10 节）。
->
-> 回归测试见 `tests/test_algorithms.py` 第 1、10 节。
+> **费用维度已移除**：早期是四维（含费用占比），随预算系统一并删除。票价语料覆盖仅 23.8%，用不完整的数据参与排序只会误导结果。
 
-### 5. 每日预算与加权背包（knapsack.py）
+### 5. 时间容量选点（selector.py）
 
-- `daily_budget_split()` 将总预算均分到每天（每日预算之和 = 总预算，**不做隐藏预留**）；
-- `weighted_knapsack()` 以预算为容量、score 为价值：
-  1. **必去项（`must_go=True`）是硬约束**——不受"单项超预算"过滤，也不受 `target_count` 限制，一定进入结果；
-  2. 其余候选按 score 降序贪心填充至 `target_count=5` 个或预算耗尽；
-  3. 局部搜索：用未选点替换已选点以提升总分（必去项固定不动）。
+早期用「预算」作为每日选点容量。实测发现该约束不成立：票价语料覆盖率仅 23.8%、住宿完全未接入，据此做预算约束只会输出一个算不准的数字。
 
-> **已修复的历史缺陷**：
-> 1. 早期实现先 `pool = [p for p in pool if p.cost <= budget]` 再取前 5 个，
->    导致**不可替代的必去景点被静默丢弃**——实测极端情况下 7 个必去项一个都保不住，
->    与 README「must_go 强制加入」的承诺矛盾；
-> 2. `daily_budget_split` 每天只给 90%（合计 0.9×总预算）却没有任何地方用到那 10%，
->    用户给 2000 元最多只能花 1800，白白浪费预算；
-> 3. 第二遍"放宽条件"的循环与第一遍条件完全相同，是冗余死代码。
->
-> 回归测试见 `tests/test_algorithms.py` 第 2、4、5 节。
+现改为**以时间为容量**：
+
+1. 由出行风格决定当日时间窗（见上表）与单个景点的平均游览时长；
+2. 扣除用餐时段（约 1 小时）与景点间交通耗时；
+3. 得到当日可容纳条目数 `daily_target`；
+4. 候选按 `score` 降序填充至 `daily_target`；
+5. **必去项不受容量限制**：`must_go=True` 的条目优先占位，不会被挤出。
+
+> 沿途单点票价仍然保留，但**只在有真实来源时显示金额**（`cost_source` 为 `third_party` 或 `free`），其余只给文字备注。
+
+> 这一改动同时改善了语义：用户能直接理解「今天排不下了」；而「预算超了」在数据不全时缺乏说服力。
 
 ### 6. 路径优化（route_optimizer.py）
 
@@ -1343,20 +1399,23 @@ score = w_interest·interest + w_rating·rating − w_detour·detour − w_cost�
 >
 > 回归测试见 `tests/test_algorithms.py` 第 8、11 节。
 
-### 8. 预算兜底校验（engine.py）
+### 8. 必去项兜底注入（engine.py）
 
-正常路径下不会超支：选点阶段已按「当日预算」封顶，而每日预算之和 = 总预算。
-`_enforce_budget()` 是一道**防御性**兜底，供后续改动（非均匀分配每日预算、
-把交通费计入 cost 等）打破日预算封顶时使用：
+聚类只对「景点」执行（`poi_type == 'spot'`），餐厅与酒店会被排除在任何簇之外——于是 `must_go` 对非景点无效：用户把「海底捞」加进必去，界面收下了，行程里却没有。
 
-- **循环**删除**全局最低分**项，直到不超支或无可删项（旧实现只删一轮，一轮不够仍然超支；
-  且是"每天各删一个"，会误删高分项）；
-- 每天至少保留 1 个点；
-- 用户指定的**必去景点永不自动删除**——宁可保留并让行程略超预算，也不能悄悄丢掉。
+修复方式：聚类完成后，把**未被任何簇收下的必去项**按质心 haversine 距离挂到最近的簇：
 
-回归测试见 `tests/test_algorithms.py` 第 6 节。
+```python
+clustered_ids = {id(p) for cluster in clusters for p in cluster}
+orphan_must = [p for p in candidates
+               if getattr(p, "must_go", False) and id(p) not in clustered_ids]
+for poi in orphan_must:
+    nearest = min(range(len(clusters)),
+                  key=lambda i: haversine(centroid(clusters[i]), poi))
+    clusters[nearest].append(poi)
+```
 
----
+这样必去项一定能进入某一天的候选池，再由选点与排程环节排入行程。
 
 ## 十一之二、RAG 知识库（检索层）
 
@@ -1365,12 +1424,12 @@ score = w_interest·interest + w_rating·rating − w_detour·detour − w_cost�
 
 ### 分层
 
-| 层 | 内容 | 来源 |
-| --- | --- | --- |
+| 层             | 内容                           | 来源                          |
+| ------------- | ---------------------------- | --------------------------- |
 | **L1 POI 文本** | 每个地点的介绍、门票、开放时间、建议游玩时长、实用小贴士 | `data/citydata/*.csv`（脚本导入） |
-| L2 城市攻略 | 交通、片区动线、餐饮、注意事项 | 待建（阶段 2） |
-| L3 通用经验 | 预算构成、预约规则、跨城串联 | 待建 |
-| L4 领域规则 | 系统能力边界、标签语义、费用口径 | 待建 |
+| L2 城市攻略       | 交通、片区动线、餐饮、注意事项              | 待建（阶段 2）                    |
+| L3 通用经验       | 预算构成、预约规则、跨城串联               | 待建                          |
+| L4 领域规则       | 系统能力边界、标签语义、费用口径             | 待建                          |
 
 ### 检索链路
 
@@ -1415,13 +1474,13 @@ cd backed
 
 脚本做了 **5 项清洗**，每一项都对应实测出来的数据问题：
 
-| 问题 | 占比 | 不清洗的后果 |
-| --- | --- | --- |
-| `介绍` 内部重复（"预览截断版 + 完整版"拼接） | 13.8% | 重复 chunk 污染检索，**Recall 指标虚高** |
-| `门票` 是 Python 字典字面量（OTA 票种 SKU） | 16.1% | 正文里出现 `{'xxx': ['¥90起']}` |
-| `地址` 是含「地址/电话/官网」的多行复合块 | 65% | "电话"被当成地址的一部分 |
-| 名字带英文尾缀且无分隔（`芹川村Qinchuan Village`） | 98% | 展示中英连写、精确匹配失效 |
-| `介绍` 带 `...` 截断痕迹 | 15% | 正文夹杂省略号 |
+| 问题                                 | 占比    | 不清洗的后果                        |
+| ---------------------------------- | ----- | ----------------------------- |
+| `介绍` 内部重复（"预览截断版 + 完整版"拼接）         | 13.8% | 重复 chunk 污染检索，**Recall 指标虚高** |
+| `门票` 是 Python 字典字面量（OTA 票种 SKU）    | 16.1% | 正文里出现 `{'xxx': ['¥90起']}`     |
+| `地址` 是含「地址/电话/官网」的多行复合块            | 65%   | "电话"被当成地址的一部分                 |
+| 名字带英文尾缀且无分隔（`芹川村Qinchuan Village`） | 98%   | 展示中英连写、精确匹配失效                 |
+| `介绍` 带 `...` 截断痕迹                  | 15%   | 正文夹杂省略号                       |
 
 转成文档时**写成完整句子而不是字段名堆砌**（向量模型对 `字段名: 值` 这种
 结构文本的语义理解很差），并显式补上**口语化标签**（"周一不开放""不需要门票"
@@ -1431,11 +1490,11 @@ cd backed
 
 `tests/test_retrieval_eval.py`（14 条标注查询 + 8 篇种子语料）：
 
-| 指标 | 实测 | 门槛 |
-| --- | --- | --- |
+| 指标       | 实测        | 门槛     |
+| -------- | --------- | ------ |
 | Recall@5 | **1.000** | ≥ 0.75 |
-| MRR | **0.952** | ≥ 0.60 |
-| NDCG@5 | **0.956** | — |
+| MRR      | **0.952** | ≥ 0.60 |
+| NDCG@5   | **0.956** | —      |
 
 > 这是**纯 BM25**（当前 LLM 服务不提供 embedding 接口）的成绩。
 > 指标按**文档级**计算：标注集是标文档的，而检索返回的是块，
@@ -1454,18 +1513,17 @@ cd backed
 
 ### 降级策略
 
-| 触发场景 | 行为 |
-| --- | --- |
-| 未配置 `AMAP_KEY` | 返回 `enhanced=false` 的空行程；前端明确提示"高德数据未接入"，**不退化到 LLM 编造行程** |
-| 地理编码找不到城市 | 同上 |
-| 天气 / POI / 公交任一接口异常 | 单个接口 try/except 返回空或估算值，不中断主流程 |
-| 公交规划无结果 | 用 Haversine + 步行 5km/h 估时 |
-| LLM 润色失败 | 仅打印告警，返回未经润色的结构化行程（不影响决策数据） |
-| 前端 Visual 图层加载失败 | 控制台告警，基础地图与路线正常显示 |
-| 短信通道未接入 / 下发失败 | 返回 501 / 502，不影响未登录用户的规划功能 |
-| 历史落库失败 | 行程仍正常展示；前端提示"已存到本机，账号同步失败"，本机副本保留 |
-| 本机记录迁移失败 | 仅打前端告警，本机记录不删除，下次登录再试 |
-| 本地 token 已失效 | 请求返回 401 → 前端清理凭证 → 路由守卫引导重新登录 |
+| 触发场景                | 行为                                                         |
+| ------------------- | ---------------------------------------------------------- |
+| 未配置 `AMAP_KEY`      | 返回 `enhanced=false` 的空行程；前端明确提示"高德数据未接入"，**不退化到 LLM 编造行程** |
+| 地理编码找不到城市           | 同上                                                         |
+| 天气 / POI / 公交任一接口异常 | 单个接口 try/except 返回空或估算值，不中断主流程                             |
+| 公交规划无结果             | 用 Haversine + 步行 5km/h 估时                                  |
+| LLM 润色失败            | 仅打印告警，返回未经润色的结构化行程（不影响决策数据）                                |
+| 前端 Visual 图层加载失败    | 控制台告警，基础地图与路线正常显示                                          |
+| 历史落库失败              | 行程仍正常展示；前端提示"已存到本机，账号同步失败"，本机副本保留                          |
+| 本机记录迁移失败            | 仅打前端告警，本机记录不删除，下次登录再试                                      |
+| 本地 token 已失效        | 请求返回 401 → 前端清理凭证 → 路由守卫引导重新登录                             |
 
 ---
 
@@ -1520,11 +1578,10 @@ cd backed
 不需要。用 SQLite（Python 标准库），首次启动后端时自动在 `backed/data/app.db` 建库建表，无需安装任何数据库服务。
 想换位置改 `.env` 的 `DB_PATH` 即可。
 
-**Q9：注册时收不到短信验证码？**
-默认 `SMS_PROVIDER=dev`，**不会真的发短信**。验证码在：
-1. 后端控制台的 `[SMS-DEV] ... 验证码=123456` 日志里；
-2. `POST /api/auth/send-code` 响应的 `data.debug_code` 字段（前端登录页会自动填入输入框）。
-要真实下发，在 `app/sms.py` 里实现 `AliyunSmsProvider` 或 `TencentSmsProvider` 的 `send()`，再把 `SMS_PROVIDER` 改成对应名字、`SMS_DEBUG_ECHO=false`。
+**Q9：没有 API Key 能先把项目跑起来吗？**
+能。后端缺 `AMAP_KEY` 时行程返回 `enhanced=false`（没有真实景点），缺 `LLM_API_KEY` 时 AI 对话走
+确定性兜底；前端缺 `VITE_AMAP_KEY` 时地图区域提示缺少 Key，其余页面正常。
+完整的降级表现见 [5.1.6](#516-没有-key-会怎样降级表现)。建议先用无 Key 方式确认能启动，再申请 Key。
 
 **Q10：提示「未登录或登录态已失效」？**
 token 默认 30 天过期（`TOKEN_TTL_DAYS`），且退出登录/服务端删除后会立即失效。前端收到 401 会自动清理本地凭证，重新登录即可。
@@ -1550,26 +1607,26 @@ token 默认 30 天过期（`TOKEN_TTL_DAYS`），且退出登录/服务端删�
 
 ## 十五、版本与历史
 
-| 阶段 | 内容 |
-| --- | --- |
-| M0 | 早期 Spring Boot + 纯 LLM 推荐版本（`back/`，存档） |
-| M1 | FastAPI 算法引擎全链路：高德数据层、缓存、typecode 富化、KMeans、加权背包、2-opt、时间排程、LLM 润色与实体校验；`/api/plan`、`/api/meta`、`/api/debug/plan` |
-| M2 | 前端重构：AI 助手风格首页、全屏高德地图 + 可拖拽 Bottom Sheet 行程页、AMap.Visual 可视化图层、SSE 对话页 |
-| M3 | 用户系统与持久化：SQLite（标准库 `sqlite3`）落库用户/验证码/登录态/历史行程；手机号验证码注册登录 + 可替换短信通道；存库不透明 Token 鉴权；`/api/auth/*`、`/api/history/*`；前端登录页、我的行程页、登录守卫与请求自动带 token；本机记录登录后自动迁移上云；补 `.gitignore` |
-| M4 | 算法修正 + 自然语言入口：修复 `w_detour` 在选点阶段恒为 0、必去景点会被预算/评分静默丢弃、每日预算隐藏扣留 10%、`two_opt` 跳过 3 点路径等缺陷；路径优化改为小规模精确枚举、大规模多起点 2-opt；新增 `/api/parse` 自然语言解析（LLM 只抽取 + 白名单/夹取/规则兜底三层防线）与首页「一句话规划」入口；补算法与解析单测（离线 74 项） |
-| M5 | 双端前端：同一 Vite 工程两个入口，移动端 H5（Vant 4，`/`）+ 桌面端 Web（Element Plus 2，`/pc/`），共用 `src/api`、`src/utils`、`src/composables`；桌面端采用左行程面板 + 右全幅地图布局，四维评分用进度条可视化，路由用 hash 以支持零配置静态托管 |
-| M6 | 参赛技术文档：`docs/` 下由脚本生成 27 页 PDF（≤30 页上限）+ Word 源文件，含 6 张自绘示意图、目录页码两遍法自动计算；内容覆盖架构、算法引擎、大模型边界、数据设计、双端前端、接口、测试验证（含 5 项算法缺陷的量化对照数据）与局限性 |
-| M7 | 真实数据补全（第一层）：高德 `place/text` 返回的 40+ 字段此前只用了 7 个。现改读 `biz_ext`——**真实评分**（修复了「口碑维度恒为 0、四维评分只有两维有效」的缺陷）、**真实营业时间**（解析为分钟区间并作为排程硬约束）、**餐饮真实人均消费**；由 typecode 前缀判定 `poi_type`（餐厅/酒店/景点，此前恒为 spot）、提取景区等级与商圈；费用按来源标注 real / estimated 并在前端显示「参考价」角标。算法单测由 25 项扩到 62 项，新增真实数据管线回归 |
-| M8 | 前端体验升级（1–5 项）：**拆掉硬编码的假数据**——交通段此前写死了 `D5472 / 07:44-08:17`（照抄竞品截图）与「22分钟·8.3公里」假耗时，现替换为 `/api/intercity` 的真实距离与驾车估算（标注「估算」+ 高德导航深链）；**上午/下午/晚上分段**；**地图 POI 名称 label + 按天汇总气泡**（可点击跳转该天）；总览卡新增**统计 chip**（时长/地点数/气温区间/总花费）与**路线缩略图**（高德静态地图后端代理）；景点图改用**高德真实照片**（此前用文本生成图冒充实景），无图时用首字占位。新增 `/api/intercity`、`/api/map/thumbnail` 两个接口与 `geocode` 防模糊匹配核对 |
-| M9 | 旅行灵感卡片流：把「行程生成的 20–40 秒空窗期」用真实地点内容填住。新增 `/api/inspiration`（**不调 LLM、不做路线计算**，冷启动 6–7 s、缓存命中 0.04 s），输出高德真实照片/评分/人均消费/商圈/营业时间，分类只取真实类目（风景/博物馆/展览/美食/购物/住宿/其他），按类目轮转避免单一类型占满。新增共用组件 `InspirationCards.vue`，用于等待页与「旅行灵感」Tab。卡片「＋ 加进行程」写入 `must_go` 并重新规划，实测点击后该地点成为行程首个条目——**把交互直接落到算法的硬约束上**。同时修复 `address`/`business_area` 等高德返回空列表 `[]` 被当字符串渲染的缺陷（缓存升至 v4），并让 POI 拉取支持并发（规划流程保持串行不变） |
-| M10 | 修复「一句话规划」的必去景点被静默丢弃 + 天数上限 + 必去匹配质量。**① 断链修复**：`goPlan` 从未把 `must_go`/`avoid` 传进 URL（移动端与桌面端都是），AI 解析出的必去景点**从未进入规划**，而回执却写着「已识别：必去景点」——现已在首页显示为可删除的 chips 并打通传参。**② 天数上限**：原先硬编码在四处且互不一致（`PlanRequestDTO` 是 1..7、`nl_parse.MAX_DAYS` 是 7、前端两处也写 7，而旧 `TripBaseInfoDTO` 却是 1..30），现统一由 `config.MAX_TRIP_DAYS`（默认 30）给出、前端经 `/api/meta` 读取，天数组件改为「快捷 1–7 天 + 步进器」。**③ 必去匹配分档**：旧实现任意子串命中即全部标为必去，实测「拙政园」会把药店「片仔癀(拙政园店)」强制排进行程；改为只取匹配最高档（完全相等 > 开头匹配 > 包含），并删除把 `poi_type` 强制改写成 `spot` 的那行（它会抹掉第一层刚判定好的餐厅/酒店类型） |
-| M11 | 预算利用（B+C+D）。实测苏州 3 天 2500 元预算只花 650（**26%**），根因不是算法"省钱"，而是行程里缺少预算的主要消费项。**① 餐饮**：`select_candidates` 原本按兴趣标签过滤，用户只选「历史/自然」时餐厅因 `interest_match=0` 被整体剔除——现始终保留一批餐厅候选，并保证**每天一个用餐点**（当日簇里没有餐厅时从全局就近补，优先营业时间覆盖饭点的）。**② 选点余量**：`target_count` 由 5 改为按当日时间窗推导（`daily_select_target`，12 小时窗口得 7）并刻意多选，给排程阶段"因闭馆/时长不足跳过"留补位空间。**③ 排程保护 must_go**：新增两段式排程——必须项（用户必去 + 用餐点）不得因时间不够被跳过，会腾掉最低分的非必须项再重排，并把腾出的位置**回填**以免当天提前结束。**④ 聚类再平衡**：KMeans 实测产出 7/124/12 的悬殊簇，导致某些天候选被抽干，新增容量再平衡（只约束上界，收敛到 1.35 倍内）。**⑤ 诚实告知**：`ItineraryVO` 新增 `budget`/`budget_note`，预算未被用满时在前端明确说明原因（住宿未接入、门票为估算值、每日时长上限）。效果：苏州 3 天 2500 元 **26% → 37%** 且三天都有真实人均消费的用餐点；成都 2 天 1500 元 **→ 51%**；1000 元场景 **→ 60%** |
-| M12 | 修复灵感流分类计数自相矛盾。原先同一行混了**两套口径**：`全部` 是接口返回的卡片数（被 `limit=24` 截断），各分类却是**池子里的总数**（未截断），而前端又是在那 24 张卡片里按类过滤——于是出现「美食 25 > 全部 24」，且点进「美食」实际只有 6 张、**标签在骗人**。现改为单一口径：接口返回完整分类池（`limit` 默认 120），`categories` 只统计真正返回的卡片（抽出 `category_counts()` 纯函数便于离线断言），前端也从实际拿到的卡片计算标签数字——**标签数字必然等于点进去能看到的张数**。实测成都「全部 75 = 风景23 + 博物馆23 + 美食25 + 购物3 + 其他1」，点「美食」正好 25 张 |
-| M13 | 「导入线路/地点」文本导入（MVP）。原先首页那张卡片只是 `showToast('导入功能开发中')` 的占位。现新增 `POST /api/import/text`：**LLM 抽取地点名 → 逐个走高德 place/text 反查 → 匹配到的返回真实 POI（坐标/评分/商圈/照片）**，匹配不到的**带原因明确列出**（如「高德只找到「太空狗乐园(相城中心)」，与输入不符」），绝不静默丢弃——导入功能最常见的坑就是"显示导入成功、实际一半没匹配上"。前端弹层支持：粘贴 → 识别 → 勾选 → 一键加入必去（复用 `must_go` 硬约束）。抽取沿用 `/api/parse` 的两道防线（LLM + 规则兜底，`source` 如实标注）；反查复用候选筛选的匹配分档，避免「拙政园」匹配到「片仔癀(拙政园店)」。过程中修掉两个 bug：提示词里的 JSON 字面量大括号被 `str.format` 当成占位符（导致每次都抛 `KeyError: 'city'` 退回规则），以及规则切分缺中文句号分隔符导致整段连在一起无法识别 |
+| 阶段  | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0  | 早期 Spring Boot + 纯 LLM 推荐版本（`back/`，存档）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| M1  | FastAPI 算法引擎全链路：高德数据层、缓存、typecode 富化、KMeans、加权背包、2-opt、时间排程、LLM 润色与实体校验；`/api/plan`、`/api/meta`、`/api/debug/plan`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| M2  | 前端重构：AI 助手风格首页、全屏高德地图 + 可拖拽 Bottom Sheet 行程页、AMap.Visual 可视化图层、SSE 对话页                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| M3  | 用户系统与持久化：SQLite（标准库 `sqlite3`）落库用户/验证码/登录态/历史行程；手机号验证码注册登录 + 可替换短信通道；存库不透明 Token 鉴权；`/api/auth/*`、`/api/history/*`；前端登录页、我的行程页、登录守卫与请求自动带 token；本机记录登录后自动迁移上云；补 `.gitignore`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| M4  | 算法修正 + 自然语言入口：修复 `w_detour` 在选点阶段恒为 0、必去景点会被预算/评分静默丢弃、每日预算隐藏扣留 10%、`two_opt` 跳过 3 点路径等缺陷；路径优化改为小规模精确枚举、大规模多起点 2-opt；新增 `/api/parse` 自然语言解析（LLM 只抽取 + 白名单/夹取/规则兜底三层防线）与首页「一句话规划」入口；补算法与解析单测（离线 74 项）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| M5  | 双端前端：同一 Vite 工程两个入口，移动端 H5（Vant 4，`/`）+ 桌面端 Web（Element Plus 2，`/pc/`），共用 `src/api`、`src/utils`、`src/composables`；桌面端采用左行程面板 + 右全幅地图布局，四维评分用进度条可视化，路由用 hash 以支持零配置静态托管                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| M6  | 参赛技术文档：`docs/` 下由脚本生成 27 页 PDF（≤30 页上限）+ Word 源文件，含 6 张自绘示意图、目录页码两遍法自动计算；内容覆盖架构、算法引擎、大模型边界、数据设计、双端前端、接口、测试验证（含 5 项算法缺陷的量化对照数据）与局限性                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| M7  | 真实数据补全（第一层）：高德 `place/text` 返回的 40+ 字段此前只用了 7 个。现改读 `biz_ext`——**真实评分**（修复了「口碑维度恒为 0、四维评分只有两维有效」的缺陷）、**真实营业时间**（解析为分钟区间并作为排程硬约束）、**餐饮真实人均消费**；由 typecode 前缀判定 `poi_type`（餐厅/酒店/景点，此前恒为 spot）、提取景区等级与商圈；费用按来源标注 real / estimated 并在前端显示「参考价」角标。算法单测由 25 项扩到 62 项，新增真实数据管线回归                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| M8  | 前端体验升级（1–5 项）：**拆掉硬编码的假数据**——交通段此前写死了 `D5472 / 07:44-08:17`（照抄竞品截图）与「22分钟·8.3公里」假耗时，现替换为 `/api/intercity` 的真实距离与驾车估算（标注「估算」+ 高德导航深链）；**上午/下午/晚上分段**；**地图 POI 名称 label + 按天汇总气泡**（可点击跳转该天）；总览卡新增**统计 chip**（时长/地点数/气温区间/总花费）与**路线缩略图**（高德静态地图后端代理）；景点图改用**高德真实照片**（此前用文本生成图冒充实景），无图时用首字占位。新增 `/api/intercity`、`/api/map/thumbnail` 两个接口与 `geocode` 防模糊匹配核对                                                                                                                                                                                                                                                                                                                                                            |
+| M9  | 旅行灵感卡片流：把「行程生成的 20–40 秒空窗期」用真实地点内容填住。新增 `/api/inspiration`（**不调 LLM、不做路线计算**，冷启动 6–7 s、缓存命中 0.04 s），输出高德真实照片/评分/人均消费/商圈/营业时间，分类只取真实类目（风景/博物馆/展览/美食/购物/住宿/其他），按类目轮转避免单一类型占满。新增共用组件 `InspirationCards.vue`，用于等待页与「旅行灵感」Tab。卡片「＋ 加进行程」写入 `must_go` 并重新规划，实测点击后该地点成为行程首个条目——**把交互直接落到算法的硬约束上**。同时修复 `address`/`business_area` 等高德返回空列表 `[]` 被当字符串渲染的缺陷（缓存升至 v4），并让 POI 拉取支持并发（规划流程保持串行不变）                                                                                                                                                                                                                                                                                                                                |
+| M10 | 修复「一句话规划」的必去景点被静默丢弃 + 天数上限 + 必去匹配质量。**① 断链修复**：`goPlan` 从未把 `must_go`/`avoid` 传进 URL（移动端与桌面端都是），AI 解析出的必去景点**从未进入规划**，而回执却写着「已识别：必去景点」——现已在首页显示为可删除的 chips 并打通传参。**② 天数上限**：原先硬编码在四处且互不一致（`PlanRequestDTO` 是 1..7、`nl_parse.MAX_DAYS` 是 7、前端两处也写 7，而旧 `TripBaseInfoDTO` 却是 1..30），现统一由 `config.MAX_TRIP_DAYS`（默认 30）给出、前端经 `/api/meta` 读取，天数组件改为「快捷 1–7 天 + 步进器」。**③ 必去匹配分档**：旧实现任意子串命中即全部标为必去，实测「拙政园」会把药店「片仔癀(拙政园店)」强制排进行程；改为只取匹配最高档（完全相等 > 开头匹配 > 包含），并删除把 `poi_type` 强制改写成 `spot` 的那行（它会抹掉第一层刚判定好的餐厅/酒店类型）                                                                                                                                                                                                        |
+| M11 | 预算利用（B+C+D）。实测苏州 3 天 2500 元预算只花 650（**26%**），根因不是算法"省钱"，而是行程里缺少预算的主要消费项。**① 餐饮**：`select_candidates` 原本按兴趣标签过滤，用户只选「历史/自然」时餐厅因 `interest_match=0` 被整体剔除——现始终保留一批餐厅候选，并保证**每天一个用餐点**（当日簇里没有餐厅时从全局就近补，优先营业时间覆盖饭点的）。**② 选点余量**：`target_count` 由 5 改为按当日时间窗推导（`daily_select_target`，12 小时窗口得 7）并刻意多选，给排程阶段"因闭馆/时长不足跳过"留补位空间。**③ 排程保护 must_go**：新增两段式排程——必须项（用户必去 + 用餐点）不得因时间不够被跳过，会腾掉最低分的非必须项再重排，并把腾出的位置**回填**以免当天提前结束。**④ 聚类再平衡**：KMeans 实测产出 7/124/12 的悬殊簇，导致某些天候选被抽干，新增容量再平衡（只约束上界，收敛到 1.35 倍内）。**⑤ 诚实告知**：`ItineraryVO` 新增 `budget`/`budget_note`，预算未被用满时在前端明确说明原因（住宿未接入、门票为估算值、每日时长上限）。效果：苏州 3 天 2500 元 **26% → 37%** 且三天都有真实人均消费的用餐点；成都 2 天 1500 元 **→ 51%**；1000 元场景 **→ 60%**                                    |
+| M12 | 修复灵感流分类计数自相矛盾。原先同一行混了**两套口径**：`全部` 是接口返回的卡片数（被 `limit=24` 截断），各分类却是**池子里的总数**（未截断），而前端又是在那 24 张卡片里按类过滤——于是出现「美食 25 > 全部 24」，且点进「美食」实际只有 6 张、**标签在骗人**。现改为单一口径：接口返回完整分类池（`limit` 默认 120），`categories` 只统计真正返回的卡片（抽出 `category_counts()` 纯函数便于离线断言），前端也从实际拿到的卡片计算标签数字——**标签数字必然等于点进去能看到的张数**。实测成都「全部 75 = 风景23 + 博物馆23 + 美食25 + 购物3 + 其他1」，点「美食」正好 25 张                                                                                                                                                                                                                                                                                                                                                                |
+| M13 | 「导入线路/地点」文本导入（MVP）。原先首页那张卡片只是 `showToast('导入功能开发中')` 的占位。现新增 `POST /api/import/text`：**LLM 抽取地点名 → 逐个走高德 place/text 反查 → 匹配到的返回真实 POI（坐标/评分/商圈/照片）**，匹配不到的**带原因明确列出**（如「高德只找到「太空狗乐园(相城中心)」，与输入不符」），绝不静默丢弃——导入功能最常见的坑就是"显示导入成功、实际一半没匹配上"。前端弹层支持：粘贴 → 识别 → 勾选 → 一键加入必去（复用 `must_go` 硬约束）。抽取沿用 `/api/parse` 的两道防线（LLM + 规则兜底，`source` 如实标注）；反查复用候选筛选的匹配分档，避免「拙政园」匹配到「片仔癀(拙政园店)」。过程中修掉两个 bug：提示词里的 JSON 字面量大括号被 `str.format` 当成占位符（导致每次都抛 `KeyError: 'city'` 退回规则），以及规则切分缺中文句号分隔符导致整段连在一起无法识别                                                                                                                                                                                                                            |
 | M14 | 「导入 + 灵感流」补齐桌面端。**① 导入**：PC 首页新增导入入口 + `el-dialog`（识别结果用 `el-tag` 勾选，未匹配的同样带原因列出）。**② 灵感流**：PC 行程页加载等待期显示灵感卡片，并把左栏改成「行程 / 灵感」双 Tab；灵感卡片「＋」写入 `must_go` 后直接重规划，已加入的可在「灵感」页一键移出。**③ 复用而非复制**：`InspirationCards.vue` 本就只用原生 HTML/CSS、零 Vant/Element Plus 依赖，两端直接共用。**④ 顺手修掉桌面端两个存量 bug**：`handleParse` 没把 `req.must_go`/`avoid` 写回表单（与 M10 移动端同源，回执写着「已识别：必去景点」但从未参与规划）；`query.city` 硬编码默认 `'杭州'`，从历史进入时会用错城市查灵感与城际——现改为以行程为准（`effectiveCity`），没有目的地时明确报错而不是静默按杭州规划。**⑤ 排查记录**：PC 首页一度整页白屏，逐层定位后确认是模板里读了 `form.must_go.length`，而 PC 的 `form` 里**没有这个字段**（`TypeError: Cannot read properties of undefined`），渲染期抛错导致 RouterView 整个渲染不出来；已在 `form` 中补上字段并给模板加判空。**这类"模板里访问不存在的字段"已经是本项目第三次白屏（移动端两次、PC 一次），值得作为双端改造的固定检查项** |
-| M15 | 移除预算系统，选点改为**时间容量**。门票语料覆盖仅 23.8%、住宿占旅行预算 40–60% 却完全未接入 —— 继续输出「预算 ¥2000 / 花费 ¥980」就是在声称一个算不准的东西。现删除 `PlanRequestDTO.budget`、`ItineraryVO.total_cost/budget_note`、`_guess_cost()` 与 `_enforce_budget()`；保留**有来源的**单点票价（`cost_source` 五档，仅 `third_party` / `free` 显示数字）；选点约束从「钱」换成「时间」（`daily_select_target()` 按当日时间窗推导），评分从四维降为三维（兴趣 / 口碑 / 绕路）；三套 profile 改为「悠闲 / 经典 / 尽览」，**同时改变评分权重与每日时间预算**。另修 `rating_norm` 下界（3.0 → 4.0）：实测 80.6% 的 POI 评分 ≥4.0，旧曲线把整条评分轴压进 0.65–0.95 的窄带，等于从未真正参与打分 |
-| M16 | 认证从「手机号 + 短信验证码」改为「**账号 + 密码**」。`pbkdf2-sha256` + 每用户独立 salt（16 字节）+ 20 万次迭代；账号归一为小写存储避免 `Alice`/`alice` 撞车；`/api/auth/send-code` 下线（旧接口调用返回 404，并有回归断言）。鉴权拆成 `current_user_optional`（未登录不报错，供 `/api/agent/chat` 匿名使用）与 `current_user_required`（401） |
-| M17 | 引入 **Agent + RAG**。**① RAG**：自研中文 bigram + unigram 分词（环境无 jieba，且 FTS5 内置 unicode61 对中文无效，整句会变成一个 token）、FTS5 倒排 + 向量双索引（写入后断言两表行数一致，否则触发器写错会静默不同步）、BM25 ∥ 向量各召回 30 条后 RRF(k=60) 融合再 LLM 重排；Embedding 不可用时整体退化为纯关键词检索。**② Agent**：14 个工具的 Function Calling 循环，CORE 6 / ADVANCED 8 按用户信号挂载（schema 每轮都要带，这一步省下约 40% 输入 token）；`RunBudget` 是**降级触发器**而非错误处理 —— 轮数/工具数/时长任一耗尽即切确定性链路，**最差体验等于改造前**；四道防线防幻觉（工具夹持 / 实体校验 / 引用校验 / 逐个反查校验）。**③ 前端**：`fetch` + `ReadableStream` 手写 SSE（axios 会缓冲整个响应，拿不到增量），处理「跨 chunk 半帧」与「`TextDecoder({stream:true})`」两个坑；思考链与工具卡片做成零依赖组件，双端共用同一份 |
+| M15 | 移除预算系统，选点改为**时间容量**。门票语料覆盖仅 23.8%、住宿占旅行预算 40–60% 却完全未接入 —— 继续输出「预算 ¥2000 / 花费 ¥980」就是在声称一个算不准的东西。现删除 `PlanRequestDTO.budget`、`ItineraryVO.total_cost/budget_note`、`_guess_cost()` 与 `_enforce_budget()`；保留**有来源的**单点票价（`cost_source` 五档，仅 `third_party` / `free` 显示数字）；选点约束从「钱」换成「时间」（`daily_select_target()` 按当日时间窗推导），评分从四维降为三维（兴趣 / 口碑 / 绕路）；三套 profile 改为「悠闲 / 经典 / 尽览」，**同时改变评分权重与每日时间窗容量**。另修 `rating_norm` 下界（3.0 → 4.0）：实测 80.6% 的 POI 评分 ≥4.0，旧曲线把整条评分轴压进 0.65–0.95 的窄带，等于从未真正参与打分                                                                                                                                                                                                                          |
+| M16 | 认证从「手机号 + 短信验证码」改为「**账号 + 密码**」。`pbkdf2-sha256` + 每用户独立 salt（16 字节）+ 20 万次迭代；账号归一为小写存储避免 `Alice`/`alice` 撞车；`/api/auth/send-code` 下线（旧接口调用返回 404，并有回归断言）。鉴权拆成 `current_user_optional`（未登录不报错，供 `/api/agent/chat` 匿名使用）与 `current_user_required`（401）                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| M17 | 引入 **Agent + RAG**。**① RAG**：自研中文 bigram + unigram 分词（环境无 jieba，且 FTS5 内置 unicode61 对中文无效，整句会变成一个 token）、FTS5 倒排 + 向量双索引（写入后断言两表行数一致，否则触发器写错会静默不同步）、BM25 ∥ 向量各召回 30 条后 RRF(k=60) 融合再 LLM 重排；Embedding 不可用时整体退化为纯关键词检索。**② Agent**：14 个工具的 Function Calling 循环，CORE 6 / ADVANCED 8 按用户信号挂载（schema 每轮都要带，这一步省下约 40% 输入 token）；`RunBudget` 是**降级触发器**而非错误处理 —— 轮数/工具数/时长任一耗尽即切确定性链路，**最差体验等于改造前**；四道防线防幻觉（工具夹持 / 实体校验 / 引用校验 / 逐个反查校验）。**③ 前端**：`fetch` + `ReadableStream` 手写 SSE（axios 会缓冲整个响应，拿不到增量），处理「跨 chunk 半帧」与「`TextDecoder({stream:true})`」两个坑；思考链与工具卡片做成零依赖组件，双端共用同一份                                                                                                                                         |
 
 ---
 
@@ -1586,114 +1643,67 @@ token 默认 30 天过期（`TOKEN_TTL_DAYS`），且退出登录/服务端删�
 
 ### 2. 表结构
 
-```mermaid
-erDiagram
-    users ||--o{ auth_tokens : "签发"
-    users ||--o{ itineraries : "拥有"
-    users {
-        int id PK
-        string phone UK "唯一，即账号"
-        string nickname
-        string avatar
-        string created_at "ISO-8601 UTC"
-        string last_login_at
-    }
-    sms_codes {
-        int id PK
-        string phone "索引"
-        string scene "register/login"
-        string code_hash "sha256 摘要，不存明文"
-        int expires_at "epoch 秒"
-        int used
-        int attempts "失败次数，超限作废"
-        string created_at
-    }
-    auth_tokens {
-        string token PK "随机串"
-        int user_id FK
-        int expires_at "epoch 秒"
-        string created_at
-    }
-    itineraries {
-        int id PK
-        int user_id FK
-        string client_id "与 user_id 组成唯一索引"
-        string title
-        string origin
-        string city
-        int days
-        real budget
-        string tags "JSON 数组"
-        string profile
-        real total_cost
-        string request_json "PlanRequestDTO 原文"
-        string itinerary_json "ItineraryVO 原文"
-        string created_at
-        string updated_at
-    }
+实际建表 **12 张**，按用途分三类。启动时由 `database.py` 以 `CREATE TABLE IF NOT EXISTS` 幂等创建，无需手动初始化。
+
+| 类别        | 表                | 用途                                                                  |
+| --------- | ---------------- | ------------------------------------------------------------------- |
+| 账号与历史     | `users`          | 账号：`username` UNIQUE、`password_hash`（pbkdf2 格式）                     |
+|           | `auth_tokens`    | 登录态：随机 token、过期时间；退出即删行                                             |
+|           | `itineraries`    | 历史行程：整份 `ItineraryVO` 以 JSON 原文落库；`(user_id, client_id)` 条件唯一索引实现幂等 |
+| 检索（RAG）   | `documents`      | 知识库文档：`doc_key`、city、category、`content_hash`（增量索引依据）                |
+|           | `doc_chunks`     | 文档切分块：正文、序号、所属文档                                                    |
+|           | `doc_chunks_fts` | FTS5 虚表：倒排索引，由触发器与 `doc_chunks` 同步                                  |
+|           | `embeddings`     | 向量：1024 维 float 打包为 BLOB，避免引入 numpy                                 |
+| 数据与 Agent | `poi_prices`     | 票价语料：按城市 + 归一化景点名索引                                                 |
+|           | `agent_sessions` | Agent 会话：标题、创建时间                                                    |
+|           | `agent_messages` | 会话消息流水（含工具调用记录）                                                     |
+|           | `tool_calls`     | 工具调用审计：入参、耗时、结果摘要                                                   |
+|           | `user_profiles`  | 长期偏好：仅存偏好统计，不存原始对话                                                  |
+| 遗留        | `sms_codes`      | **早期短信验证码方案的遗留表**。登录已改为账号密码，该表当前不再写入，仅为兼容旧库而保留                      |
+
+> 三类表互不交叉：删除检索相关的 4 张表不影响账号与历史；反过来也一样。
+
+### 3. 账号密码注册 / 登录流程
+
+认证方案由早期的「手机号 + 短信验证码」改为「账号 + 密码」。验证码方案需要维护哈希、一次性消费、失败计数、发送频率四套逻辑，而本地演示环境并不真正发短信——收益为零，复杂度很高。
+
+**密码存储**（`app/security.py`）
+
+```
+格式：pbkdf2$<迭代次数>$<salt_hex>$<hash_hex>
+算法：pbkdf2-hmac-sha256，200,000 次迭代
+盐  ：每用户 16 字节随机盐（secrets.token_bytes）
+校验：verify_password 对损坏或空哈希返回 False 而不抛异常（兼容旧账号）
 ```
 
-**设计取舍**
+**账号规则**：3–20 位，仅字母 / 数字 / 下划线 / 中文；统一 `strip().lower()` 后存储，避免 `Alice` 与 `alice` 撞车。
 
-- **手机号即账号，不存密码**：验证码登录没有密码可泄露；`sms_codes.code_hash` 存 `sha256(phone + ':' + code)`，
-  绑定手机号防止同一验证码跨号复用，比较时用 `hmac.compare_digest` 防时序侧信道。
-- **时间戳两种形态**：展示用 `created_at` 存 ISO-8601 UTC 字符串（前端直接 `new Date()` 解析）；
-  过期判断用 `expires_at` 存 epoch 秒整数（数值比较，不受格式影响）。
-- **行程体整份存 JSON 原文**：`itinerary_json` / `request_json` 保存算法产出与入参原文，
-  这样算法模型（`ItineraryVO`）继续演进时**不需要改表**；索引列只抽出列表页要用的字段。
-- **幂等靠唯一索引**：`itineraries(user_id, client_id)` 建了条件唯一索引（`client_id IS NOT NULL` 时生效），
-  前端重复上传同一行程只会覆盖更新，不会产生重复记录。
+**注册** `POST /api/auth/register`
 
-### 3. 手机号注册 / 登录流程
+1. 校验账号格式、密码长度（6–64）、昵称长度
+2. 查重：`SELECT id FROM users WHERE username = ?` → 已存在返回 **409**
+3. 生成盐与哈希，写入 `users`（`created_at` 与 `last_login_at` 同时初始化）
+4. 签发 token 存入 `auth_tokens`，返回 `AuthVO{token, expires_in, user}`
 
-```mermaid
-flowchart TD
-    A["输入手机号 + 选择场景"] --> B{"scene 与号码状态匹配?"}
-    B -->|"register 且已注册"| E1["409 该号码已注册，请直接登录"]
-    B -->|"login 且未注册"| E2["404 该号码尚未注册，请先注册"]
-    B -->|"60 秒内重发 / 超每小时上限"| E3["429 发送过于频繁"]
-    B -->|"匹配通过"| C["写入验证码（哈希 + 5 分钟有效期）"]
-    C --> D["用户输入验证码"]
-    D --> F{"校验结果"}
-    F -->|"错误"| G["attempts +1，返回剩余次数"] --> D
-    F -->|"错误达 5 次"| H["该验证码作废，需重新获取"] --> A
-    F -->|"过期"| H
-    F -->|"通过"| I["消费验证码（used=1）"]
-    I -->|"注册场景"| J["建 users 行 + 签发 token"]
-    I -->|"登录场景"| K["更新 last_login_at + 签发 token"]
-    J --> L["已登录（token 存 auth_tokens）"]
-    K --> L
-    L -->|"调用 logout"| M["删除 token 行 → 已登出"]
-```
+**登录** `POST /api/auth/login`
 
-**安全与防刷措施**
+1. 按 `username` 查用户
+2. 账号不存在与密码错误**统一返回 401**（不区分，避免账号枚举）
+3. `verify_password` 校验；旧手机号账号（`password_hash` 为 NULL）返回明确提示，需重新注册
+4. 签发新 token，更新 `last_login_at`
 
-| 措施 | 实现 |
-| --- | --- |
-| 验证码不落明文 | `code_hash = sha256(phone + ':' + code)` |
-| 验证码一次性 | 校验通过即 `used = 1`；同号同场景下发新码时旧码立即作废 |
-| 暴力猜码防护 | 单个验证码失败达 `SMS_MAX_ATTEMPTS`（默认 5）即作废 |
-| 发送频率限制 | 同号 60 秒最小间隔 + 每小时上限（默认 10 次） |
-| 账号存在性检查 | 注册场景拒绝已注册号码，登录场景拒绝未注册号码，避免脏数据 |
-| 登录态可作废 | token 存库，退出登录删除行；签发新 token 时顺带清理该用户过期 token |
-| 越权隔离 | 所有历史行程查询/删除都带 `user_id` 条件，他人资源统一返回 404（不泄露存在性） |
-| 手机号脱敏 | 对外只返回 `138****1111`，日志同样脱敏 |
+**退出** `POST /api/auth/logout`：删除 `auth_tokens` 中该行（幂等），token 立即失效。
 
-### 4. 接入真实短信通道
+### 4. 密码与登录态的安全设计
 
-业务代码只依赖 `app/sms.py` 的 `SmsProvider` 抽象，切换通道**不需要改任何业务逻辑**：
-
-```python
-class AliyunSmsProvider(SmsProvider):
-    name = "aliyun"
-
-    async def send(self, phone: str, code: str, scene: str) -> bool:
-        # 用已有的 httpx 依赖直接调阿里云短信 API，或换成官方 SDK
-        ...
-        return True
-```
-
-然后设置 `SMS_PROVIDER=aliyun`、`SMS_DEBUG_ECHO=false` 即可。
+- **不可逆存储**：只存 pbkdf2 哈希，永不存明文；哈希串自带迭代次数与盐，换算法时可平滑迁移。
+- **不引入 JWT**：登录态是存库的不透明随机串（`secrets.token_urlsafe`），服务端可主动作废；无需管理签名密钥，也无法被离线伪造。
+- **越权返回 404**：访问他人资源统一返回 404 而非 403，避免泄露资源是否存在。
+- **鉴权拆成两个依赖**（`app/deps.py`）：
+  - `current_user_optional`：未登录不报错，供 `/api/agent/chat` 等匿名场景使用；
+  - `current_user_required`：必须登录，否则 401。
+- **业务服务不直接读 HTTP 头**：用户身份由依赖注入传入，避免每个服务重复解析凭证。
+- **密钥不入代码**：所有 Key 走环境变量，仓库只保留 `.env.example` 模板；`.env` 与 `.env.local` 均被 `.gitignore` 忽略。
 
 ### 5. 前端登录态管理
 
@@ -1719,17 +1729,16 @@ flowchart LR
 
 全项目只有三处调用大模型，每处的权限都被严格限定，且都有降级路径：
 
-| 落点 | 文件 | LLM 被允许做什么 | 不能被允许做什么 | 失败时 |
-| --- | --- | --- | --- | --- |
+| 落点   | 文件                     | LLM 被允许做什么                    | 不能被允许做什么             | 失败时                             |
+| ---- | ---------------------- | ----------------------------- | -------------------- | ------------------------------- |
 | 需求解析 | `services/nl_parse.py` | 把自然语言翻译成 `PlanRequestDTO` 的字段 | 编造用户没提到的信息；选点、定序、算费用 | 退回正则 + 城市表的确定性解析（`source=rule`） |
-| 文案润色 | `services/polish.py` | 写顶层描述与每日导语 | 新增/修改任何景点、时间、费用 | 返回未经润色的结构化行程，决策数据不受影响 |
-| 流式对话 | `services/chat.py` | 自由回答旅游问题 | 影响任何已生成行程的结构化字段 | SSE 推 `{"error": ...}` 事件，前端直接展示 |
+| 文案润色 | `services/polish.py`   | 写顶层描述与每日导语                    | 新增/修改任何景点、时间、费用      | 返回未经润色的结构化行程，决策数据不受影响           |
 
 **需求解析的三道防线**（`nl_parse.py`）：
 
 1. **白名单**：`tags` 只能取 `VALID_TAGS`，`profile` 只能取 `VALID_PROFILES`，
    越界值直接丢弃；
-2. **范围夹取**：天数夹到 1–7、预算不低于 100，并把夹取动作写进 `notes` 回报给用户；
+2. **范围夹取**：天数夹到 1–30，越界值夹取并写进 `notes` 回报给用户；
 3. **规则兜底**：LLM 不可用或返回不可解析时，退回正则 + 城市表的确定性解析——
    弱网/断网也能用，与项目的降级哲学一致。
 
@@ -1740,4 +1749,32 @@ flowchart LR
 
 ---
 
-> 本项目为竞赛/教学用途。地图数据与 POI 版权归高德软件有限公司所有，大模型服务由 SiliconFlow 提供。
+## 十七、团队信息
+
+| 角色           | 成员  | 负责模块                                  |
+| ------------ | --- | ------------------------------------- |
+| 项目负责人 / 架构设计 | 赵盼盼 | 四层边界设计、技术选型与关键取舍决策、整体进度把控             |
+| 算法与数据处理      | 黄宇超 | 算法引擎（评分 / 分天 / 选点 / 路径 / 排程）、高德数据层与缓存 |
+| AI 能力开发      | 赵盼盼 | 大模型调用封装、Agent 工具层与主循环、RAG 检索链路        |
+| 后端服务开发       | 赵盼盼 | 接口层、鉴权与历史行程、导入与识别、测试脚本                |
+| 前端开发         | 黄宇超 | 移动端与桌面端页面、地图交互、Agent 思考链展示            |
+| 测试与文档        | 黄宇超 | 测试用例设计、降级演练、技术文档与部署指南                 |
+
+> **提交前请补全上表**：成员姓名与各自负责的模块。评审会核对「分工」与「Git 提交记录」是否一致。
+
+### 协作与提交规范
+
+- **提交信息**采用 `type(module): 中文简述` 格式，`type` 取 `feat` / `fix` / `test` / `docs` / `chore`。
+- **一个提交只做一件事**，说明中写清「为什么这么改」而不是「改了什么」——例如「放弃手机号验证码：dev 模式不真发短信，却要维护四套逻辑」比「修改 auth.py」有用得多。
+- **后端改动**必须保证 13 套离线测试全部通过；**前端改动**必须同时验证 `/` 与 `/pc/` 两个入口（部分模块两端共用）。
+- **密钥一律走环境变量**，仓库只保留 `.env.example` 模板，真实值放 `.env` 与 `.env.local`（均被 `.gitignore` 忽略）。
+
+### 代码组织约定
+
+- 分层边界不可破坏：新增功能若涉及「选点 / 排序 / 时间」，必须落在算法引擎；大模型只允许产出描述性文本，且必须过实体校验。
+- 数据库访问只走 `app/db/`，不在其他模块里直接 `sqlite3.connect()`。
+- 不引入重型求解器与 ORM，算法部分保持纯标准库可独立讲解。
+
+---
+
+> 本项目为竞赛用途。地图数据与 POI 版权归高德软件有限公司所有，大模型服务由 SiliconFlow 提供。
