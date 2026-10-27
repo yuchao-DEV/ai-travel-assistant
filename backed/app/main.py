@@ -291,19 +291,17 @@ async def parse_api(dto: ParseRequestDTO):
 async def debug_plan(
     city: str = "杭州",
     days: int = 3,
-    budget: float = 2000,
     tags: str = "历史,自然,美食",
     profile: str = "经典",
 ):
     """调试路由：GET 方便浏览器直接访问，打印 ItineraryVO 完整结构。
 
-    用法: /api/debug/plan?city=杭州&days=3&tags=历史,自然,美食&profile=舒适型
+    用法: /api/debug/plan?city=杭州&days=3&tags=历史,自然,美食&profile=经典
     """
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     dto = PlanRequestDTO(
         city=city,
         days=days,
-        budget=budget,
         tags=tag_list,
         must_go=[],
         avoid=[],
@@ -559,7 +557,7 @@ async def agent_session_detail_api(
     """
     data = agent_session_service.get(session_id, user["id"] if user else None)
     if not data:
-        raise ApiError(404, "会话不存在")
+        raise ApiError("会话不存在", code=404)
     return {"success": True, "code": 200, "data": data}
 
 
@@ -571,7 +569,7 @@ async def agent_session_delete_api(
     """删除会话（连同消息与工具调用记录）。"""
     ok = agent_session_service.delete(session_id, user["id"] if user else None)
     if not ok:
-        raise ApiError(404, "会话不存在")
+        raise ApiError("会话不存在", code=404)
     return {"success": True, "code": 200, "data": {"deleted": True}}
 
 

@@ -108,13 +108,16 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAgentStream } from '@/composables/useAgentStream'
+import { getSession } from '@/api/agent'
+import { stashAgentTrip } from '@/utils/agentTrip'
 import AgentTimeline from '@/components/AgentTimeline.vue'
 
 const router = useRouter()
-const { steps, answer, itinerary, statusText, running, error, doneReason, send, stop } =
+const route = useRoute()
+const { steps, answer, itinerary, itineraryFull, statusText, running, error, doneReason, sessionId, send, stop } =
   useAgentStream()
 
 const draft = ref('')
@@ -169,13 +172,56 @@ function retry() {
   send(lastMessage.value, historyForApi.value)
 }
 
+// ---- 从「AI 会话记录」继续对话 ----
+//
+// 记录页跳过来时 URL 带 session_id：把历史消息读回来铺成气泡，
+// 并把 sessionId 设成它，这样下一句话会续在同一条会话（服务端按 id 追加）。
+const resumeSessionId = computed(() => String(route.query.session_id || ''))
+
+async function resumeFromHistory() {
+  const sid = resumeSessionId.value
+  if (!sid) return
+  try {
+    const res = await getSession(sid)
+    const data = res?.data
+    const msgs = (data && data.messages) || []
+    if (!msgs.length) return
+    // 最后一条是助手答复 → 当作"当前这一轮"，其余进历史
+    const last = msgs[msgs.length - 1]
+    const head = last && last.role === 'assistant' ? msgs.slice(0, -1) : msgs
+    history.value = head.map((m) => ({ role: m.role, content: m.content }))
+    if (last && last.role === 'assistant') {
+      const prev = head[head.length - 1]
+      lastMessage.value = prev && prev.role === 'user' ? prev.content : ''
+      if (lastMessage.value) history.value = head.slice(0, -1).map((m) => ({ role: m.role, content: m.content }))
+      answer.value = last.content
+    }
+    sessionId.value = sid
+  } catch (e) {
+    // 会话可能被删了：不打断使用，正常开新会话即可
+    console.warn('恢复会话失败，按新会话处理', e)
+  }
+}
+
+onMounted(resumeFromHistory)
+
 function openItinerary() {
-  // 行程数据已在内存里；跳转时间线页后会重新规划（保持与现有流程一致）
+  // 把助手这份**完整行程**暂存，时间线直接渲染，不再重新规划。
+  // 之前只传 city/days，时间线会用算法再跑一遍——用户点进去看到的是另一份行程。
   router.push({
     path: '/timeline',
     query: {
       city: itinerary.value?.city,
       days: itinerary.value?.plan?.length || 3,
+      // 规划入参必须一起带过去：Timeline 全部从 URL query 读，
+      // 漏了 origin 就退回默认「当涂」，漏了 tags 行程就会和助手给的不一致。
+      // 把完整行程暂存，时间线直接渲染，不再重新规划
+      agent_trip: stashAgentTrip(itineraryFull.value) || undefined,
+      origin: itinerary.value?.origin || undefined,
+      tags: (itinerary.value?.tags || []).join(',') || undefined,
+      must_go: (itinerary.value?.must_go || []).join(',') || undefined,
+      avoid: (itinerary.value?.avoid || []).join(',') || undefined,
+      profile: itinerary.value?.profile || undefined,
     },
   })
 }

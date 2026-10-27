@@ -21,9 +21,10 @@
             {{ (row.updated_at || '').replace('T', ' ').slice(0, 16) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" size="small" @click="open(row)">查看</el-button>
+            <el-button text type="primary" size="small" @click="resume(row)">继续对话</el-button>
             <el-popconfirm title="删除后不可恢复，确认删除？" @confirm="remove(row)">
               <template #reference>
                 <el-button text type="danger" size="small">删除</el-button>
@@ -63,14 +64,21 @@
           <pre class="pah-call-args">{{ c.arguments }}</pre>
         </div>
       </template>
+      <div class="pah-resume">
+        <el-button type="primary" round @click="resume(detail)">继续对话</el-button>
+        <span class="pah-resume-tip">带着这段上下文回到 AI 助手接着问</span>
+      </div>
     </el-drawer>
   </div>
 </template>
 
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { deleteSession, getSession, getSessions } from '@/api/agent'
+
+const router = useRouter()
 
 const sessions = ref([])
 const loading = ref(true)
@@ -107,6 +115,13 @@ async function open(row) {
   }
 }
 
+/** 带着这个会话回到 AI 助手接着聊（AgentChat 会按 session_id 恢复上下文） */
+function resume(row) {
+  const id = row?.id || row?.session_id
+  if (!id) return
+  router.push({ path: '/agent', query: { session_id: id } })
+}
+
 async function remove(row) {
   try {
     await deleteSession(row.id)
@@ -139,5 +154,16 @@ onMounted(load)
   margin: 6px 0 0; padding: 6px 8px; background: var(--app-bg-subtle); border-radius: 6px;
   font-size: 11px; color: var(--app-text-secondary); white-space: pre-wrap; word-break: break-all;
   max-height: 140px; overflow: auto;
+}
+.pah-resume {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--app-hairline);
+}
+.pah-resume-tip {
+  font-size: 12.5px;
+  color: var(--app-text-tertiary);
 }
 </style>

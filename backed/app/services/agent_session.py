@@ -32,6 +32,22 @@ def create(user_id: Optional[int], first_message: str = "") -> str:
     return session_id
 
 
+def belongs_to(session_id: str, user_id: Optional[int]) -> bool:
+    """会话是否属于该用户（轻量查询，不加载消息）。
+
+    用途：路由层收到前端回传的 session_id 时，**先确认归属**再往里追加消息。
+    否则任何人只要猜到一个 id 就能往别人的会话里写内容。
+    """
+    if not session_id or not user_id:
+        return False
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM agent_sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
+        ).fetchone()
+    return row is not None
+
+
 def touch(session_id: str) -> None:
     """更新会话时间戳与消息计数。"""
     if not session_id:

@@ -49,7 +49,10 @@
           </template>
         </div>
         <div class="ah-detail-foot">
-          <van-button type="danger" plain size="small" round @click="remove">
+          <van-button type="primary" size="small" round block @click="resume">
+            继续对话
+          </van-button>
+          <van-button type="danger" plain size="small" round block @click="remove">
             删除这条会话
           </van-button>
         </div>
@@ -106,6 +109,14 @@ async function open(s) {
   }
 }
 
+/** 带着这个会话回到 AI 助手接着聊 */
+function resume() {
+  const id = detail.value?.session_id
+  if (!id) return
+  showDetail.value = false
+  router.push({ path: '/agent', query: { session_id: id } })
+}
+
 async function remove() {
   if (!detail.value) return
   try {
@@ -148,7 +159,7 @@ onMounted(load)
 }
 .ah-detail-title { font-size: 15px; font-weight: 600; color: var(--app-text); }
 .ah-detail-body { flex: 1; overflow-y: auto; padding: 12px 16px; }
-.ah-detail-foot { padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--app-border); }
+.ah-detail-foot { padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--app-border); display: flex; flex-direction: column; gap: 8px; }
 
 .ah-msg { margin-bottom: 10px; font-size: 13px; line-height: 1.7; }
 .ah-role { display: inline-block; margin-right: 6px; font-size: 11px; padding: 1px 6px; border-radius: 8px; }
