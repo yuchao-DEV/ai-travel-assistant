@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check:refs": "node scripts/check-refs.mjs",
+    "prebuild": "node scripts/check-refs.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify": "node scripts/check-refs.mjs && vite build"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
