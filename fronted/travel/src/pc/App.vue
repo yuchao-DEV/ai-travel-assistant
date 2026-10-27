@@ -81,7 +81,9 @@ onMounted(() => {
         </el-menu-item>
       </el-menu>
 
-      <div class="header-right">
+      <!-- 顶部账号入口：在「我的」页隐藏——那一页的页眉已经完整展示账号与退出，
+           两处并排会出现「u uitest79635」重复两次的观感。 -->
+      <div v-if="route.path !== '/mine'" class="header-right">
         <template v-if="isLoggedIn">
           <el-dropdown @command="onCommand">
             <span class="user-chip">

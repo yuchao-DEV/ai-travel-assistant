@@ -16,16 +16,20 @@ const { user, isLoggedIn, ensureInitialized, logout } = useAuth()
 const tripCount = ref(null)
 
 const nickname = computed(() => user.value?.nickname || '旅行爱好者')
-const phoneText = computed(() => user.value?.phone || '')
-const subTitle = computed(() =>
-  isLoggedIn.value ? `已登录 · ${phoneText.value}` : '登录后体验更多功能'
-)
+// 账号密码方案下 UserVO 里**没有 phone 字段**（改用 username）。
+// 旧代码读 user.phone，结果恒为 undefined → 界面显示成「已登录 · 」+ 空白。
+const accountText = computed(() => user.value?.username || '')
+const subTitle = computed(() => {
+  if (!isLoggedIn.value) return '登录后体验更多功能'
+  return accountText.value ? `已登录 · ${accountText.value}` : '已登录'
+})
 
+// 只列**系统真能做到**的入口。
+// 旧的「我的收藏 / 浏览历史 / 设置」三个 to 为空字符串，点击只弹
+// 「该功能开发中」——那是界面在声称不存在的功能，已删除。
 const menus = computed(() => [
   { icon: 'orders-o', label: '我的行程', badge: tripCount.value, to: '/history' },
-  { icon: 'star-o', label: '我的收藏', to: '' },
-  { icon: 'clock-o', label: '浏览历史', to: '' },
-  { icon: 'setting-o', label: '设置', to: '' },
+  { icon: 'chat-o', label: 'AI 会话记录', to: '/agent/history' },
 ])
 
 // ---- AI 偏好画像：必须可见可删 ----
@@ -83,10 +87,7 @@ async function loadTripCount() {
 }
 
 function onMenuClick(item) {
-  if (!item.to) {
-    showToast('该功能开发中')
-    return
-  }
+  if (!item.to) return
   if (!isLoggedIn.value) {
     router.push({ path: '/login', query: { redirect: item.to } })
     return
@@ -192,7 +193,7 @@ watch(isLoggedIn, () => {
             <span class="profile-k">节奏倾向</span><span class="profile-v">{{ profile.profile.pace }}</span>
           </div>
           <div class="profile-row" v-if="profile.profile?.budget_band">
-            <span class="profile-k">预算档位</span><span class="profile-v">{{ profile.profile.budget_band }}</span>
+            <span class="profile-k">预算印象</span><span class="profile-v">{{ profile.profile.budget_band }}</span>
           </div>
           <div class="profile-row" v-if="(profile.profile?.companions || []).length">
             <span class="profile-k">同行人</span>
@@ -208,7 +209,6 @@ watch(isLoggedIn, () => {
           </div>
           <div class="profile-tip">画像只作参考，你每次说的要求一律优先。</div>
         </template>
-        <van-cell title="AI 会话记录" is-link @click="$router.push('/agent/history')" />
       </div>
 
       <!-- 退出登录 -->
