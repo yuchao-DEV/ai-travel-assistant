@@ -65,15 +65,18 @@ backed/data/*.bak*
 fronted/travel/write_home.js
 
 
-# ������������ز�����ύ��
+# 部署打包产物（本地产物，勿提交）
 _deploy/
-# һ���Ե��Խű���ִ���꼴ɾ��
+# 一次性调试脚本（执行完即删）
 backed/_vbashi.py
 
-# ����ǰ�Ĳ��������������ɲ�������ѹ�ʱ�����湫���ֿ�ַ���
+# 改造前的参赛稿与配套生成产物（内容已过时，不随公开仓库分发）
 docs/*.pdf
 docs/*.docx
 docs/build_doc.py
 docs/build_all.py
 docs/make_figures.py
 docs/figures/fig-*.png
+
+# 文档与本地产物（仓库只保留前后端代码）
+docs/
