@@ -18,6 +18,9 @@ export function useAgentStream() {
   const steps = ref([])
   const answer = ref('')
   const itinerary = shallowRef(null)
+  // 完整 ItineraryVO（后端 vo.model_dump()）。时间线要用它直接渲染——
+  // 精简的 itinerary 缺 photos / score_breakdown / transport，渲染出来会掉内容。
+  const itineraryFull = shallowRef(null)
   const statusText = ref('')
   const running = ref(false)
   const error = ref('')
@@ -31,6 +34,7 @@ export function useAgentStream() {
     steps.value = []
     answer.value = ''
     itinerary.value = null
+    itineraryFull.value = null
     statusText.value = ''
     error.value = ''
     doneReason.value = ''
@@ -90,8 +94,15 @@ export function useAgentStream() {
         })
         break
 
+      case 'session':
+        // 服务端建好会话后回传 id，后续轮次带回去才能续上同一条记录
+        if (evt.session_id) sessionId.value = evt.session_id
+        break
+
       case 'itinerary':
         itinerary.value = evt.itinerary || null
+        // 后端从 v? 起同时给完整 VO；没有时回退 null，时间线会走"重新规划"老路径
+        itineraryFull.value = evt.itinerary_full || null
         break
 
       case 'profile_update':
@@ -157,6 +168,7 @@ export function useAgentStream() {
     steps,
     answer,
     itinerary,
+    itineraryFull,
     statusText,
     running,
     error,

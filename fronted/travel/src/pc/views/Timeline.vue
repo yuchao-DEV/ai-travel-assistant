@@ -15,6 +15,7 @@ import { ElMessage } from 'element-plus'
 import { Back, Clock, Coin, Location, Promotion, Refresh, Sunny } from '@element-plus/icons-vue'
 
 import { getHistoryDetail, saveHistory, updateHistory } from '@/api/history'
+import { readAgentTrip, clearAgentTrip } from '@/utils/agentTrip'
 import { getInspiration, getPlan } from '@/api/travel'
 import { useAuth } from '@/composables/useAuth'
 import { loadAmap, AMAP_VISUAL_ID } from '@/composables/useAmap'
@@ -399,12 +400,47 @@ async function fetchFromHistory() {
   if (data.request) Object.assign(query, data.request)
 }
 
+// URL 带 agent_trip 时直接渲染助手那份行程，不重新规划（理由见移动端注释）
+const agentTripToken = computed(() => route.query.agent_trip || '')
+
+const loadAgentTrip = async () => {
+  const token = agentTripToken.value
+  if (!token) return false
+  const data = readAgentTrip(token)
+  if (!data || !Array.isArray(data.days) || !data.days.length) {
+    console.warn('助手行程暂存已失效，回退为重新规划')
+    return false
+  }
+  itinerary.value = data
+  // 标题不要用 description（那是一百多字的散文），留空让 persistTrip
+  // 用 `${origin}出发·${city}${days}日游` 生成「北京出发·亳州3日游」
+  savedToAccount.value = true
+  loading.value = false
+  try { await persistTrip() } catch (e) { console.warn('保存助手行程失败', e) }
+  return true
+}
+
+/** 重新规划：清掉助手暂存并去掉 URL 标记，之后才真正调算法。 */
+const replan = async () => {
+  const token = agentTripToken.value
+  if (token) {
+    clearAgentTrip(token)
+    const next = { ...route.query }
+    delete next.agent_trip
+    await router.replace({ path: '/timeline', query: next })
+  }
+  await fetchPlan()
+}
+
 async function fetchPlan() {
   loading.value = true
   errorMsg.value = ''
   savedToAccount.value = false
   await ensureInitialized()
   try {
+    // 助手直接跳转过来的：用那份行程渲染，跳过算法重排。
+    // 必须在 try 内，否则下面的 finally（城际交通/灵感流/缩略图）不会执行。
+    if (await loadAgentTrip()) return
     if (historyId.value) {
       await fetchFromHistory()
     } else if (!query.city) {
@@ -476,7 +512,7 @@ watch(panelTab, async (tab) => {
           type="primary"
           :icon="Refresh"
           :loading="loading"
-          @click="fetchPlan"
+          @click="replan"
         >
           重新规划
         </el-button>

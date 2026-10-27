@@ -92,7 +92,10 @@ async def run_fallback(
         yield ToolEndEvent(call_id="fallback_plan", name="plan_itinerary",
                            ok=True, elapsed_ms=result.elapsed_ms,
                            summary=f"{city} {days} 天行程")
-        yield ItineraryEvent(itinerary=result.data)
+        yield ItineraryEvent(
+            itinerary=result.data,
+            itinerary_full=(result.extra or {}).get("itinerary_full"),
+        )
         yield ChunkEvent(text=(
             f"已为你生成 {city} 的 {days} 天行程（基础模式）。"
             f"共 {len(result.data.get('plan') or [])} 天安排，"

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import { getInspiration, getIntercity, getPlan, getRouteThumbnail } from '@/api/travel'
 import { getHistoryDetail, saveHistory, updateHistory } from '@/api/history'
+import { readAgentTrip, clearAgentTrip } from '@/utils/agentTrip'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
 import { loadAmap, AMAP_VISUAL_ID } from '@/composables/useAmap'
@@ -364,10 +365,16 @@ const loadThumbnail = async () => {
   if (thumbObjectUrl) URL.revokeObjectURL(thumbObjectUrl)
   thumbObjectUrl = ''
   thumbUrl.value = ''
-  const url = await getRouteThumbnail(days)
-  if (url) {
-    thumbObjectUrl = url
-    thumbUrl.value = url
+  // 缩略图是**增强项**，失败不该影响主流程：以前它抛错会冒泡到
+  // fetchPlan 的 catch，把整页标成「网络异常」，而行程其实已经渲染好了。
+  try {
+    const url = await getRouteThumbnail(days)
+    if (url) {
+      thumbObjectUrl = url
+      thumbUrl.value = url
+    }
+  } catch (e) {
+    console.warn('路线缩略图获取失败（不影响行程展示）', e)
   }
 }
 const displayTitle = computed(() => { if(tripTitle.value) return tripTitle.value; if(itinerary.value&&itinerary.value.description) return itinerary.value.description; return query.origin+'出发·'+query.city+query.days+'日深度游' })
@@ -422,7 +429,8 @@ const persistTrip = async () => {
           request,
           itinerary: itinerary.value,
         })
-        savedToAccount.value = true
+        // 移动端没有 savedToAccount（那是桌面端的"已存入账号"状态展示），
+        // 不要照抄桌面端，否则覆盖更新历史行程时会抛 ReferenceError
         return
       } catch (err) {
         // 记录已被删除（404）时不要静默丢改动：清掉覆盖目标，落到下面的新增
@@ -443,13 +451,54 @@ const persistTrip = async () => {
   }
 }
 
+// URL 带 agent_trip 时，TimeLine 直接渲染助手给出的那一份行程，**不重新规划**。
+//
+// 为什么：以前只带 city/days 过来，这里会再跑一遍算法（20-40 秒），
+// 而且结果和助手刚展示的那份可能不同 —— 用户点进去会发现"不是刚才那个"。
+const agentTripToken = computed(() => route.query.agent_trip || '')
+
+const loadAgentTrip = async () => {
+  const token = agentTripToken.value
+  if (!token) return false
+  const data = readAgentTrip(token)
+  if (!data || !Array.isArray(data.days) || !data.days.length) {
+    // 暂存丢了（隐私模式/换标签页）：回落到正常规划，不要白屏
+    console.warn('助手行程暂存已失效，回退为重新规划')
+    return false
+  }
+  itinerary.value = data
+  // 标题不要用 description（那是一百多字的散文），留空让 persistTrip
+  // 用 `${origin}出发·${city}${days}日游` 生成「北京出发·亳州3日游」
+  loading.value = false
+  // 存到本地/账号，让它出现在「我的行程」里
+  try { await persistTrip() } catch (e) { console.warn('保存助手行程失败', e) }
+  return true
+}
+
+/** 重新规划：清掉助手暂存并去掉 URL 标记，之后才真正调算法。 */
+const replan = async () => {
+  const token = agentTripToken.value
+  if (token) {
+    clearAgentTrip(token)
+    const next = { ...route.query }
+    delete next.agent_trip
+    await router.replace({ path: '/timeline', query: next })
+  }
+  await fetchPlan()
+}
+
 const fetchPlan = async () => {
   loading.value = true
   isError.value = false
   errorMsg.value = ''
   // 先确认登录态：回看历史行程需要登录
   await ensureInitialized()
+  // 助手直接跳转过来的：用那份行程渲染，跳过算法重排
   try {
+    // 助手直接跳转过来的：用那份行程渲染，跳过算法重排。
+    // **必须放在 try 内**——fetchPlan 的 finally 里有
+    // loadInspiration / loadIntercity / loadThumbnail，提前 return 会全部跳过。
+    if (await loadAgentTrip()) return
     if (historyId.value) {
       await fetchFromHistory()
       return
@@ -942,7 +991,7 @@ onBeforeUnmount(() => {
       <van-button v-if="historyId && !isLoggedIn" type="primary" round @click="router.push('/login')">
         去登录
       </van-button>
-      <van-button v-else type="primary" round @click="fetchPlan">重新加载</van-button>
+      <van-button v-else type="primary" round @click="replan">重新加载</van-button>
     </div>
 
     <!-- 行程详情 -->

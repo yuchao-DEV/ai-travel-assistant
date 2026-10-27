@@ -330,7 +330,10 @@ class AgentOrchestrator:
             )
         if result.ok and result.is_itinerary:
             self._itinerary = result.data
-            yield ItineraryEvent(itinerary=result.data)
+            yield ItineraryEvent(
+                itinerary=result.data,
+                itinerary_full=(result.extra or {}).get("itinerary_full"),
+            )
 
         self.messages.append(result.to_message(call.id))
 

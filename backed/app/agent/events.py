@@ -121,10 +121,14 @@ class ChunkEvent(AgentEvent):
 class ItineraryEvent(AgentEvent):
     """行程产出。整个 Agent 会话最重要的一个事件。"""
     itinerary: Optional[Dict[str, Any]] = None
+    # 完整 ItineraryVO（含 photos / score_breakdown / transport 等）。
+    # 前端拿它直接渲染时间线，避免"点进去又重规划一遍、结果还不一样"。
+    itinerary_full: Optional[Dict[str, Any]] = None
     type: str = "itinerary"
 
     def payload(self) -> Dict[str, Any]:
-        return {"itinerary": self.itinerary}
+        return {"itinerary": self.itinerary,
+                "itinerary_full": self.itinerary_full}
 
 
 @dataclass
@@ -149,6 +153,20 @@ class ErrorEvent(AgentEvent):
         if self.code:
             body["code"] = self.code
         return body
+
+
+@dataclass
+class SessionEvent(AgentEvent):
+    """会话标识。流一开始就发，前端存下来在后续轮次带回去。
+
+    为什么需要它：登录用户的对话要落库（「我的 → AI 会话记录」），
+    而服务端是**先建会话再跑**的，前端必须拿到这个 id 才能续上同一会话。
+    """
+    session_id: str = ""
+    type: str = "session"
+
+    def payload(self) -> Dict[str, Any]:
+        return {"session_id": self.session_id}
 
 
 @dataclass
