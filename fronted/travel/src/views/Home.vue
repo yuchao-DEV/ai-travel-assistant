@@ -103,8 +103,23 @@ const filteredCities = computed(() => {
   if (!kw) return allCities.value
   return allCities.value.filter((c) => c.includes(kw))
 })
+// 城市选择器要区分"给哪一项选"。
+//
+// 旧实现：出发地和目的地共用同一个 popup，而 pickCity 永远写 formData.city（目的地）。
+// 于是点「出发地」打开的是目的地选择器；**叉掉出发地之后就再也设不回去了**
+// （只能去改「我的」或其他地方，而首页没有第二个入口）。
+const cityPickerTarget = ref('city')          // 'origin' | 'city'
+const cityPickerTitle = computed(() =>
+  cityPickerTarget.value === 'origin' ? '选择出发地' : '选择目的地')
+
+function openCityPicker(target) {
+  cityPickerTarget.value = target === 'origin' ? 'origin' : 'city'
+  cityKeyword.value = ''
+  showCityPicker.value = true
+}
+
 function pickCity(city) {
-  formData.city = city
+  formData[cityPickerTarget.value] = city
   showCityPicker.value = false
   cityKeyword.value = ''
 }
@@ -355,6 +370,13 @@ const selectDestination = (city) => {
 const goPage = (page) => router.push(`/${page}`)
 
 const handleSubmit = () => {
+  // 出发地必填。旧实现不校验它，而行程页的 `origin: route.query.origin || '当涂'`
+  // 会在空值时**静默回落到硬编码的「当涂」**——用户明明清空了，系统却按当涂算城际
+  // 交通和标题，属于"界面声称的 ≠ 系统实际做的"。宁可在这里拦住。
+  if (!formData.origin) {
+    showToast('请选择出发地')
+    return
+  }
   if (!formData.city) {
     showToast('请选择目的地')
     return
@@ -472,7 +494,7 @@ watch(isLoggedIn, () => {
 
       <!-- 出发地 + 目的地 -->
       <div class="route-section">
-        <div class="route-input origin-input" @click="showCityPicker = true">
+        <div class="route-input origin-input" @click="openCityPicker('origin')">
           <van-icon name="location-o" size="18" color="var(--app-text-secondary)" />
           <span class="route-label">出发地</span>
           <span class="route-value" :class="{ filled: formData.origin }">{{ formData.origin || '选择城市' }}</span>
@@ -485,7 +507,7 @@ watch(isLoggedIn, () => {
           </span>
         </div>
 
-        <div class="route-input dest-input" @click="showCityPicker = true">
+        <div class="route-input dest-input" @click="openCityPicker('city')">
           <van-icon name="search" size="18" color="var(--app-brand)" />
           <span class="route-label">目的地</span>
           <span class="route-value" :class="{ filled: formData.city, highlight: formData.city }">
@@ -710,12 +732,12 @@ watch(isLoggedIn, () => {
     <van-popup v-model:show="showCityPicker" position="bottom" round :style="{ maxHeight: '80%' }">
       <div class="city-picker">
         <div class="city-picker-head">
-          <span class="city-picker-title">选择城市</span>
+          <span class="city-picker-title">{{ cityPickerTitle }}</span>
           <span class="city-picker-count">共 {{ allCities.length }} 个</span>
         </div>
         <van-search
           v-model="cityKeyword"
-          placeholder="输入城市名筛选，如 广州"
+          :placeholder="`输入城市名筛选，如 广州`"
           shape="round"
           background="transparent"
         />
@@ -724,15 +746,15 @@ watch(isLoggedIn, () => {
             v-for="c in filteredCities"
             :key="c"
             class="city-item"
-            :class="{ active: c === formData.city }"
+            :class="{ active: c === formData[cityPickerTarget] }"
             @click="pickCity(c)"
           >
             {{ c }}
-            <van-icon v-if="c === formData.city" name="success" size="14" color="var(--app-brand)" />
+            <van-icon v-if="c === formData[cityPickerTarget]" name="success" size="14" color="var(--app-brand)" />
           </div>
           <div v-if="!filteredCities.length" class="city-empty">
             没有匹配的城市。后端能规划任何高德认得的城市，
-            也可以直接一句话告诉 AI 目的地。
+            也可以到「AI 助手」里直接用一句话说要去的城市。
           </div>
         </div>
       </div>

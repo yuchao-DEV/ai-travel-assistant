@@ -292,7 +292,6 @@ async function runImport() {
 const IMPORT_IMAGE_MAX = 8 * 1024 * 1024
 async function handleImageSelect(file) {
   if (!file) return
-  importImageName.value = file.name
   importing.value = true
   try {
     lastImportFile.value = file
@@ -333,7 +332,13 @@ function removePlace(field, name) {
   form[field] = (form[field] || []).filter((n) => n !== name)
 }
 
-function validate() {  if (!form.city) {
+function validate() {
+  // 出发地必填：行程页会用 `origin || '当涂'` 兜底，空值会静默回落到硬编码城市
+  if (!form.origin || !String(form.origin).trim()) {
+    ElMessage.warning('请填写出发地')
+    return false
+  }
+  if (!form.city) {
     ElMessage.warning('请选择目的地')
     return false
   }
