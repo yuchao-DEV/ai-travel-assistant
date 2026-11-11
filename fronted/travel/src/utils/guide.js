@@ -52,9 +52,43 @@ export function markGuideSeen(id) {
 /** 重置全部引导（「重新看一遍引导」用） */
 export function resetGuides() {
   writeState({ version: VERSION, seen: {} })
+  activeGuide = ''
+}
+
+// ---------------------------------------------------------------------------
+// 互斥：同一时刻只允许一个引导出现
+//
+// 为什么必须做：新手上路时有 4 处引导可能同时触发（整页说明、上传小气泡、
+// 出结果后的解读弹窗、帮助面板）。同时弹两个，用户会直接全部关掉——
+// 那比不做引导更糟。这里用一个模块级变量排队，先抢到的先用。
+// ---------------------------------------------------------------------------
+let activeGuide = ''
+
+/** 抢占引导位；返回 true 表示抢到（调用方负责 eventual releaseGuide） */
+export function claimGuide(id) {
+  if (activeGuide) return false
+  activeGuide = id
+  return true
+}
+
+export function releaseGuide(id) {
+  if (activeGuide === id) activeGuide = ''
+}
+
+/** 是否有引导正在显示（用于延迟其它引导） */
+export function isGuideBusy() {
+  return !!activeGuide
 }
 
 export const GUIDE_IDS = {
   homeNotice: 'home-notice',
   pcTour: 'pc-tour',
+  /** 移动端首访的整页说明（3 屏） */
+  homeIntro: 'home-intro',
+  /** 「上传攻略图」的小气泡 */
+  uploadTip: 'upload-tip',
+  /** 首次出结果后的「这条行程怎么来的」弹窗 */
+  itineraryExplainer: 'itinerary-explainer',
+  /** 首次进 AI 助手的小气泡 */
+  agentTip: 'agent-tip',
 }
