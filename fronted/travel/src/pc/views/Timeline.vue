@@ -24,6 +24,10 @@ import InspirationCards from '@/components/InspirationCards.vue'
 import StorySection from '@/components/StorySection.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import HelpPanel from '@/components/HelpPanel.vue'
+import ItineraryExplainer from '@/components/ItineraryExplainer.vue'
+import {
+  GUIDE_IDS, claimGuide, hasSeenGuide, markGuideSeen, releaseGuide,
+} from '@/utils/guide'
 import { describeError } from '@/utils/errorText'
 
 const route = useRoute()
@@ -55,6 +59,35 @@ const errorMsg = ref('')
 // 原始错误：describeError 需要 code/status 才能判断该说"去登录"还是"重试"
 const errorRaw = ref(null)
 const showHelp = ref(false)
+// 首次拿到行程后弹一次「这条行程怎么来的」。
+// 用 claimGuide 抢位：这样两端/两个入口只会有一个真正弹出来。
+const showExplainer = ref(false)
+watch(
+  itinerary,
+  (v) => {
+    if (!v || !(v.days || []).length) return
+    if (hasSeenGuide(GUIDE_IDS.itineraryExplainer)) return
+    if (!claimGuide(GUIDE_IDS.itineraryExplainer)) return
+    setTimeout(() => {
+      showExplainer.value = true
+    }, 900)
+  },
+  { immediate: true },
+)
+
+// 关闭时统一收尾：不依赖具体按钮（组件内点「看懂了」不会触发 @details）
+watch(showExplainer, (open) => {
+  if (open) return
+  markGuideSeen(GUIDE_IDS.itineraryExplainer)
+  releaseGuide(GUIDE_IDS.itineraryExplainer)
+})
+
+function closeExplainer() {
+  showExplainer.value = false
+  markGuideSeen(GUIDE_IDS.itineraryExplainer)
+  releaseGuide(GUIDE_IDS.itineraryExplainer)
+}
+
 const errorInfo = computed(() =>
   describeError(errorRaw.value, { context: historyId.value ? 'history' : 'plan' })
 )
@@ -787,6 +820,12 @@ watch(panelTab, async (tab) => {
     </section>
 
     <HelpPanel v-model="showHelp" />
+    <!-- 首次出结果的解读弹窗（强引导，只出现一次） -->
+    <ItineraryExplainer
+      v-model="showExplainer"
+      :itinerary="itinerary"
+      @details="closeExplainer"
+    />
   </div>
 </template>
 
