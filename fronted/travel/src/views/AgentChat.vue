@@ -99,7 +99,7 @@
     </div>
 
     <!-- 输入区 -->
-    <div class="agent-input">
+    <div ref="inputWrapEl" class="agent-input">
       <van-field
         v-model="draft"
         placeholder="说说你的旅行想法…"
@@ -120,6 +120,20 @@
       >发送</van-button>
       <van-button v-else type="danger" size="small" round plain @click="stop">停止</van-button>
     </div>
+
+    <!-- 首访小气泡：指向输入区 -->
+    <BubbleTip
+      v-model="showAgentTip"
+      :target="() => inputWrapEl"
+      :max-width="250"
+      placement="top"
+      @close="closeAgentTip"
+    >
+      <p>
+        把想法写下来就行，不用讲究格式。<br />
+        比如「杭州三天，带老人，别排太满」——说得越具体，排得越准。
+      </p>
+    </BubbleTip>
   </div>
 </template>
 
@@ -130,6 +144,10 @@ import { useAgentStream } from '@/composables/useAgentStream'
 import { getSession } from '@/api/agent'
 import { stashAgentTrip } from '@/utils/agentTrip'
 import AgentTimeline from '@/components/AgentTimeline.vue'
+import BubbleTip from '@/components/BubbleTip.vue'
+import {
+  GUIDE_IDS, claimGuide, hasSeenGuide, markGuideSeen, releaseGuide,
+} from '@/utils/guide'
 
 const router = useRouter()
 const route = useRoute()
@@ -242,6 +260,27 @@ async function resumeFromHistory() {
 }
 
 onMounted(resumeFromHistory)
+
+// 首访小气泡：只说一句"其实可以随便说"，比再加一段说明更有效
+const showAgentTip = ref(false)
+const inputWrapEl = ref(null)
+let agentTipTimer = null
+
+onMounted(() => {
+  if (hasSeenGuide(GUIDE_IDS.agentTip)) return
+  agentTipTimer = setTimeout(() => {
+    if (lastMessage.value || steps.value.length) return
+    if (!claimGuide(GUIDE_IDS.agentTip)) return
+    showAgentTip.value = true
+  }, 1600)
+})
+
+function closeAgentTip() {
+  showAgentTip.value = false
+  markGuideSeen(GUIDE_IDS.agentTip)
+  releaseGuide(GUIDE_IDS.agentTip)
+}
+
 
 function openItinerary() {
   // 把助手这份**完整行程**暂存，时间线直接渲染，不再重新规划。
