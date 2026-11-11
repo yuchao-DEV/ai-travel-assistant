@@ -3,14 +3,17 @@ import { reactive, ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import ImageImportCard from '@/components/ImageImportCard.vue'
-import GuideNotice from '@/components/GuideNotice.vue'
 import HelpPanel from '@/components/HelpPanel.vue'
+import HomeIntro from '@/components/HomeIntro.vue'
+import BubbleTip from '@/components/BubbleTip.vue'
 import { getMeta, importImage, importText } from '@/api/travel'
 import { getHistoryList } from '@/api/history'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
 import { bindForm } from '@/utils/formDraft'
-import { resetGuides } from '@/utils/guide'
+import {
+  GUIDE_IDS, claimGuide, hasSeenGuide, markGuideSeen, releaseGuide, resetGuides,
+} from '@/utils/guide'
 
 const router = useRouter()
 const { isLoggedIn, ensureInitialized } = useAuth()
@@ -205,14 +208,46 @@ const showPreferences = ref(false)
 
 // ---- 使用说明 / 首次引导 ----
 const showHelp = ref(false)
-const guideNoticeRef = ref(null)
 
-/** 帮助面板里「重新看首页引导」：清标记并立刻展示说明卡 */
+// 首访整页引导（图里第 4 种）：只在第一次进入时出现，看完才进首页
+const showIntro = ref(false)
+// 「上传攻略图」小气泡（图里第 1 种）：轻量、就地、只出现一次
+const showUploadTip = ref(false)
+const importWrapEl = ref(null)
+let uploadTipTimer = null
+
+/**
+ * 排队显示上传气泡：整页引导/其他引导在显示时先不抢位。
+ * 延迟 1.8 秒是因为首页刚渲染完就弹气泡，用户还没看清页面。
+ */
+function scheduleUploadTip(delay = 1800) {
+  if (hasSeenGuide(GUIDE_IDS.uploadTip)) return
+  clearTimeout(uploadTipTimer)
+  uploadTipTimer = setTimeout(() => {
+    if (!claimGuide(GUIDE_IDS.uploadTip)) return
+    showUploadTip.value = true
+  }, delay)
+}
+
+function closeUploadTip() {
+  showUploadTip.value = false
+  markGuideSeen(GUIDE_IDS.uploadTip)
+  releaseGuide(GUIDE_IDS.uploadTip)
+}
+
+function onIntroFinish() {
+  markGuideSeen(GUIDE_IDS.homeIntro)
+  releaseGuide(GUIDE_IDS.homeIntro)
+  scheduleUploadTip(1200)
+}
+
+/** 帮助面板里「重新看首页引导」：清标记并重新打开整页引导 */
 function restartGuide() {
   resetGuides()
   showHelp.value = false
-  showToast('已重置，下面就是首页引导')
-  guideNoticeRef.value?.show()
+  showIntro.value = true
+  claimGuide(GUIDE_IDS.homeIntro)
+  showToast('已重置，重新演示一遍引导')
 }
 
 // 出发地为空时给几个快捷选择。**不是"热门"统计**（我们没有出发地数据），
@@ -487,6 +522,13 @@ onMounted(async () => {
   await ensureInitialized()
   loadTrips()
   await loadServerTrips()
+
+  // 首访：先整页说明；已看过则直接排队上传气泡
+  if (!hasSeenGuide(GUIDE_IDS.homeIntro) && claimGuide(GUIDE_IDS.homeIntro)) {
+    showIntro.value = true
+  } else {
+    scheduleUploadTip(1800)
+  }
 })
 
 // 登录/退出后切换数据来源
@@ -521,16 +563,15 @@ watch(isLoggedIn, () => {
     </header>
 
     <div class="page-content">
-      <!-- 首次进入的三步说明（只出现一次，可关闭） -->
-      <GuideNotice ref="guideNoticeRef" />
-
       <!-- 图片导入：说一句话的能力已整体交给「AI 助手」，
            首页只保留"传张攻略图"这一条输入路径。 -->
-      <ImageImportCard
-        :loading="importing"
-        @select="handleImageSelect"
-        @error="showToast"
-      />
+      <div ref="importWrapEl">
+        <ImageImportCard
+          :loading="importing"
+          @select="handleImageSelect"
+          @error="showToast"
+        />
+      </div>
 
       <!-- 必去 / 避开：必须可见可删。
            导入后写着"已核对存在 4 个"，却看不到具体是哪几个，用户无法核对——
@@ -954,6 +995,21 @@ watch(isLoggedIn, () => {
 
     <!-- 使用说明（帮助中心）：常驻，任何时候都能看 -->
     <HelpPanel v-model="showHelp" @restart-guide="restartGuide" />
+
+    <!-- 首访整页引导（3 屏，可跳过） -->
+    <HomeIntro v-model="showIntro" @finish="onIntroFinish" />
+
+    <!-- 「上传攻略图」小气泡：轻量就地提示，只出现一次 -->
+    <BubbleTip
+      v-model="showUploadTip"
+      :target="() => importWrapEl"
+      :max-width="250"
+      @close="closeUploadTip"
+    >
+      <p>
+        有攻略截图？传上来，我会把里面的地点<b>扒出来</b>，逐个去高德核对是否真实存在。
+      </p>
+    </BubbleTip>
   </div>
 </template>
 

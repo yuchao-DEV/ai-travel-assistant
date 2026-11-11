@@ -9,6 +9,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import ImageImportCard from '@/components/ImageImportCard.vue'
 import HelpPanel from '@/components/HelpPanel.vue'
+import BubbleTip from '@/components/BubbleTip.vue'
 import { ElMessage , ElMessageBox } from 'element-plus'
 import { ChatDotRound, Picture } from '@element-plus/icons-vue'
 
@@ -18,7 +19,9 @@ import { getMeta, importImage, importText } from '@/api/travel'
 import { bindForm } from '@/utils/formDraft'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
-import { GUIDE_IDS, hasSeenGuide, markGuideSeen, resetGuides } from '@/utils/guide'
+import {
+  GUIDE_IDS, claimGuide, hasSeenGuide, markGuideSeen, releaseGuide, resetGuides,
+} from '@/utils/guide'
 
 const router = useRouter()
 // ---- 叙事首屏 ----
@@ -32,6 +35,26 @@ const formCard = ref(null)
 // 移动端不用浮层（390px 会被气泡压掉半个表单），改用一条说明卡。
 const showHelp = ref(false)
 const tourOpen = ref(false)
+
+// 「上传攻略图」小气泡：轻量就地提示，只出现一次
+const showUploadTip = ref(false)
+const importWrapEl = ref(null)
+let uploadTipTimer = null
+
+function scheduleUploadTip(delay = 1800) {
+  if (hasSeenGuide(GUIDE_IDS.uploadTip)) return
+  clearTimeout(uploadTipTimer)
+  uploadTipTimer = setTimeout(() => {
+    if (!claimGuide(GUIDE_IDS.uploadTip)) return
+    showUploadTip.value = true
+  }, delay)
+}
+
+function closeUploadTip() {
+  showUploadTip.value = false
+  markGuideSeen(GUIDE_IDS.uploadTip)
+  releaseGuide(GUIDE_IDS.uploadTip)
+}
 
 const TOUR_STEPS = [
   {
@@ -54,6 +77,9 @@ const TOUR_STEPS = [
 function closeTour() {
   tourOpen.value = false
   markGuideSeen(GUIDE_IDS.pcTour)
+  releaseGuide(GUIDE_IDS.pcTour)
+  // tour 讲完再讲"上传攻略图"，两个引导不同时出现
+  scheduleUploadTip(1200)
 }
 
 /** 帮助面板里「重新看首页引导」 */
@@ -461,9 +487,11 @@ onMounted(async () => {
   await loadLocal()
   await loadServerTrips()
   // 首次进入桌面端：自动演示一次三步引导（每台设备一次，可随时从「怎么用」重看）
-  if (!hasSeenGuide(GUIDE_IDS.pcTour)) {
+  if (!hasSeenGuide(GUIDE_IDS.pcTour) && claimGuide(GUIDE_IDS.pcTour)) {
     await nextTick()
     tourOpen.value = true
+  } else {
+    scheduleUploadTip(1800)
   }
 })
 
@@ -507,11 +535,13 @@ watch(isLoggedIn, () => {
       <div class="col-left">
         <!-- 图片导入：与移动端共用同一个组件（纯 HTML + 令牌，不依赖 Element）。
              「一句话规划」已整体移除，自然语言入口移交 AI 助手（/agent）。 -->
-        <ImageImportCard
-          :loading="importing"
-          @select="handleImageSelect"
-          @error="(msg) => ElMessage.warning(msg)"
-        />
+        <div ref="importWrapEl">
+          <ImageImportCard
+            :loading="importing"
+            @select="handleImageSelect"
+            @error="(msg) => ElMessage.warning(msg)"
+          />
+        </div>
 
       <div ref="formCard" class="pc-card">
         <h3 class="pc-section-title"><el-icon color="var(--app-brand)"><Promotion /></el-icon>行程参数</h3>
@@ -802,6 +832,18 @@ watch(isLoggedIn, () => {
 
     <!-- 使用说明（帮助中心） -->
     <HelpPanel v-model="showHelp" @restart-guide="restartGuide" />
+
+    <!-- 「上传攻略图」小气泡 -->
+    <BubbleTip
+      v-model="showUploadTip"
+      :target="() => importWrapEl"
+      :max-width="280"
+      @close="closeUploadTip"
+    >
+      <p>
+        有攻略截图？传上来，我会把里面的地点<b>扒出来</b>，逐个去高德核对是否真实存在。
+      </p>
+    </BubbleTip>
     </div>
   </div>
 </template>
