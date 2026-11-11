@@ -5,9 +5,10 @@
  * 与移动端一致的分工：自然语言解析（/api/parse）只负责把话翻译成结构化参数，
  * 真正的选点/排序/时间/费用由算法引擎在 /api/plan 里完成。
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import ImageImportCard from '@/components/ImageImportCard.vue'
+import HelpPanel from '@/components/HelpPanel.vue'
 import { ElMessage , ElMessageBox } from 'element-plus'
 import { ChatDotRound, Picture } from '@element-plus/icons-vue'
 
@@ -17,6 +18,7 @@ import { getMeta, importImage, importText } from '@/api/travel'
 import { bindForm } from '@/utils/formDraft'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
+import { GUIDE_IDS, hasSeenGuide, markGuideSeen, resetGuides } from '@/utils/guide'
 
 const router = useRouter()
 // ---- 叙事首屏 ----
@@ -24,6 +26,50 @@ const router = useRouter()
 // 背景图是**项目自带的静态图**（public/hero.jpg），不再临时去 API 取。
 // 好处：首屏没有网络依赖、不会闪、也不会因为某个城市没照片就整段消失。
 const formCard = ref(null)
+
+// ---- 使用说明 / 首次引导（el-tour）----
+// 桌面端用 Element Plus 自带的 Tour 做三步高亮：目的地 → 偏好 → 主按钮。
+// 移动端不用浮层（390px 会被气泡压掉半个表单），改用一条说明卡。
+const showHelp = ref(false)
+const tourOpen = ref(false)
+
+const TOUR_STEPS = [
+  {
+    target: '#tour-city',
+    title: '先选目的地',
+    description: '点这里挑城市，任何高德认得的城市都能规划。也可以直接点右侧的「热门目的地」卡片。',
+  },
+  {
+    target: '#tour-prefs',
+    title: '偏好可以全部留空',
+    description: '下面这些都不填也能出结果，按默认规则排（经典 3 天）。想调节奏就填，不填不影响。',
+  },
+  {
+    target: '#tour-plan',
+    title: '生成后能继续改',
+    description: '一次规划约 20–40 秒。生成后不满意，直接在「AI 助手」里说「太满了」「换自然向」就会重排。',
+  },
+]
+
+function closeTour() {
+  tourOpen.value = false
+  markGuideSeen(GUIDE_IDS.pcTour)
+}
+
+/** 帮助面板里「重新看首页引导」 */
+async function restartGuide() {
+  resetGuides()
+  showHelp.value = false
+  await nextTick()
+  tourOpen.value = true
+  ElMessage.success('已重置，重新演示一遍引导')
+}
+
+// 出发地快捷选择（不是统计结果，只是省一次打开下拉的操作）
+const ORIGIN_SHORTCUTS = ['南京', '合肥', '马鞍山', '上海', '北京']
+function pickOrigin(city) {
+  form.origin = city
+}
 
 const hero = ref({
   image: '/hero.jpg',
@@ -414,6 +460,11 @@ onMounted(async () => {
   await ensureInitialized()
   await loadLocal()
   await loadServerTrips()
+  // 首次进入桌面端：自动演示一次三步引导（每台设备一次，可随时从「怎么用」重看）
+  if (!hasSeenGuide(GUIDE_IDS.pcTour)) {
+    await nextTick()
+    tourOpen.value = true
+  }
 })
 
 watch(isLoggedIn, () => {
@@ -424,6 +475,17 @@ watch(isLoggedIn, () => {
 
 <template>
   <div class="pc-home">
+    <!-- 常驻帮助入口：首次引导只演示一次，评委中途进来时靠这个 -->
+    <button type="button" class="pc-help-entry" aria-label="查看使用说明" @click="showHelp = true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.4" />
+        <circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none" />
+      </svg>
+      <span>怎么用</span>
+    </button>
+
     <!-- 叙事首屏：真实高德照片 + 衬线大标题。
          **只在拿到真实照片时渲染** —— 没有照片就不放占位图，
          宁可少一个章节，也不要用 AI 生成的假图充数。 -->
@@ -458,8 +520,19 @@ watch(isLoggedIn, () => {
             <div class="form-group-label"><span>基本信息</span></div>
             <el-form-item label="出发地">
               <el-input v-model="form.origin" placeholder="如：当涂" clearable />
+              <!-- 出发地为空时给快捷选择，省一次打开下拉逐个翻 -->
+              <div v-if="!form.origin" class="origin-shortcuts">
+                <span class="os-label">快捷选择</span>
+                <button
+                  v-for="c in ORIGIN_SHORTCUTS"
+                  :key="c"
+                  type="button"
+                  class="os-chip"
+                  @click="pickOrigin(c)"
+                >{{ c }}</button>
+              </div>
             </el-form-item>
-            <el-form-item label="目的地">
+            <el-form-item label="目的地" id="tour-city">
               <el-select v-model="form.city" placeholder="选择城市" filterable style="width: 100%">
                 <el-option v-for="c in allCities" :key="c" :label="c" :value="c" />
               </el-select>
@@ -472,7 +545,7 @@ watch(isLoggedIn, () => {
           <!-- 把 7 个控件分成两段：基本信息（必填）与偏好微调（可选）。
                原先 9 个 el-form-item 平铺，用户扫下来没有停顿点，
                不知道哪些是必须的、哪些可以不管。 -->
-          <div class="form-group-label">
+          <div class="form-group-label" id="tour-prefs">
             <span>偏好微调</span>
             <span class="form-group-hint">以下都可留空，留空按默认规则规划</span>
           </div>
@@ -537,7 +610,7 @@ watch(isLoggedIn, () => {
             <span class="form-hint">不选则默认 09:00–21:00；再点一次可取消</span>
           </el-form-item>
 
-          <el-button type="primary" size="large" class="plan-btn" @click="handleSubmit">
+          <el-button id="tour-plan" type="primary" size="large" class="plan-btn" @click="handleSubmit">
             开始规划旅程
           </el-button>
         </el-form>
@@ -707,11 +780,104 @@ watch(isLoggedIn, () => {
       </el-button>
     </template>
   </el-dialog>
+
+    <!-- 首次进入的三步引导（Element Plus 自带 Tour，无新增依赖）。
+         只演示一次；之后可以从「怎么用 → 重新看首页引导」再次触发。 -->
+    <el-tour
+      v-model="tourOpen"
+      :mask="{ color: 'rgba(20, 28, 24, 0.45)' }"
+      :scroll-into-view-options="{ block: 'center', inline: 'center' }"
+      @close="closeTour"
+      @finish="closeTour"
+    >
+      <el-tour-step
+        v-for="(s, i) in TOUR_STEPS"
+        :key="s.target"
+        :target="s.target"
+        :title="s.title"
+        :description="s.description"
+        :header-slot="false"
+      />
+    </el-tour>
+
+    <!-- 使用说明（帮助中心） -->
+    <HelpPanel v-model="showHelp" @restart-guide="restartGuide" />
     </div>
   </div>
 </template>
 
 <style scoped>
+/* 常驻帮助入口：浮在右上角，不随内容滚动消失 */
+.pc-home {
+  position: relative;
+}
+.pc-help-entry {
+  position: absolute;
+  top: 18px;
+  right: 24px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 13px 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--app-hairline-strong, rgba(0, 0, 0, 0.1));
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--app-elev-1);
+  transition: color 0.16s var(--app-ease-out, ease-out),
+              background 0.16s var(--app-ease-out, ease-out);
+}
+.pc-help-entry svg {
+  width: 15px;
+  height: 15px;
+}
+.pc-help-entry:hover {
+  color: var(--app-brand-hover);
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.1));
+}
+.pc-help-entry:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+}
+
+/* 出发地快捷选择 */
+.origin-shortcuts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.os-label {
+  font-size: 11.5px;
+  color: var(--app-text-tertiary);
+}
+.os-chip {
+  appearance: none;
+  border: 1px solid var(--app-hairline-strong, rgba(0, 0, 0, 0.1));
+  background: var(--app-bg, #f4f9f5);
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.16s var(--app-ease-out, ease-out);
+}
+.os-chip:hover {
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.12));
+  color: var(--app-brand-hover);
+}
+.os-chip:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+}
+
 .home-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr);

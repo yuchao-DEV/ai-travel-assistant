@@ -3,11 +3,14 @@ import { reactive, ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import ImageImportCard from '@/components/ImageImportCard.vue'
+import GuideNotice from '@/components/GuideNotice.vue'
+import HelpPanel from '@/components/HelpPanel.vue'
 import { getMeta, importImage, importText } from '@/api/travel'
 import { getHistoryList } from '@/api/history'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
 import { bindForm } from '@/utils/formDraft'
+import { resetGuides } from '@/utils/guide'
 
 const router = useRouter()
 const { isLoggedIn, ensureInitialized } = useAuth()
@@ -67,6 +70,34 @@ function toggleCompanion(item) {
   if (idx > -1) formData.companions.splice(idx, 1)
   else formData.companions.push(item)
 }
+
+/**
+ * 同行伙伴对每日点数的**真实影响**，直接展示给用户。
+ *
+ * 数值来自后端 COMPANION_SPOT_DELTA（不选约 5 个/天）：
+ * 独自 +1 → 5–6；家庭/情侣 −3 → 3–4；朋友 −1 → 4–5；老人 −5 → 2–3。
+ * 多选时后端取**最保守**的那个（同时带老人和朋友按老人算），这里保持一致，
+ * 否则界面说的和算法做的会不一样。
+ */
+const COMPANION_EFFECT = {
+  独自: { delta: 1, text: '每天约 5–6 个点' },
+  家庭: { delta: -3, text: '每天约 3–4 个点' },
+  情侣: { delta: -3, text: '每天约 3–4 个点' },
+  朋友: { delta: -1, text: '每天约 4–5 个点' },
+  老人: { delta: -5, text: '每天约 2–3 个点，避开费体力的项目' },
+}
+
+const companionEffectText = computed(() => {
+  if (!formData.companions.length) return ''
+  const picked = formData.companions
+    .map((c) => COMPANION_EFFECT[c])
+    .filter(Boolean)
+    .sort((a, b) => a.delta - b.delta)
+  if (!picked.length) return ''
+  const strictest = picked[0]
+  const extra = picked.length > 1 ? '（多选时按最保守的算）' : ''
+  return `${strictest.text}${extra}`
+})
 
 // 行程节奏是单选：再点一次可取消
 function togglePace(item) {
@@ -171,6 +202,25 @@ const openTrip = (trip) => {
 }
 
 const showPreferences = ref(false)
+
+// ---- 使用说明 / 首次引导 ----
+const showHelp = ref(false)
+const guideNoticeRef = ref(null)
+
+/** 帮助面板里「重新看首页引导」：清标记并立刻展示说明卡 */
+function restartGuide() {
+  resetGuides()
+  showHelp.value = false
+  showToast('已重置，下面就是首页引导')
+  guideNoticeRef.value?.show()
+}
+
+// 出发地为空时给几个快捷选择。**不是"热门"统计**（我们没有出发地数据），
+// 只是省去打开城市选择器逐个翻的操作，所以文案写「快捷选择」。
+const ORIGIN_SHORTCUTS = ['南京', '合肥', '马鞍山', '上海', '北京']
+function pickOrigin(city) {
+  formData.origin = city
+}
 
 // 「一句话规划」已整体移除：自然语言入口移交 AI 助手（/agent）。
 // 相关状态（nlText / parsing / parseResult / handleParse / clearParse /
@@ -458,9 +508,22 @@ watch(isLoggedIn, () => {
         去哪里<span class="masthead-serif">看看</span>？
       </h1>
       <div class="masthead-rule"></div>
+      <!-- 常驻帮助入口：首次引导只会出现一次，评委/用户中途进来时靠它 -->
+      <button type="button" class="masthead-help" aria-label="查看使用说明" @click="showHelp = true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.4" />
+          <circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none" />
+        </svg>
+        <span>怎么用</span>
+      </button>
     </header>
 
     <div class="page-content">
+      <!-- 首次进入的三步说明（只出现一次，可关闭） -->
+      <GuideNotice ref="guideNoticeRef" />
+
       <!-- 图片导入：说一句话的能力已整体交给「AI 助手」，
            首页只保留"传张攻略图"这一条输入路径。 -->
       <ImageImportCard
@@ -499,6 +562,18 @@ watch(isLoggedIn, () => {
           <span class="route-label">出发地</span>
           <span class="route-value" :class="{ filled: formData.origin }">{{ formData.origin || '选择城市' }}</span>
           <van-icon v-if="formData.origin" name="clear" size="14" color="var(--app-text-tertiary)" @click.stop="formData.origin = ''" />
+        </div>
+
+        <!-- 出发地为空时给快捷选择，省掉打开选择器逐个翻 -->
+        <div v-if="!formData.origin" class="origin-shortcuts">
+          <span class="os-label">快捷选择</span>
+          <button
+            v-for="c in ORIGIN_SHORTCUTS"
+            :key="c"
+            type="button"
+            class="os-chip"
+            @click.stop="pickOrigin(c)"
+          >{{ c }}</button>
         </div>
 
         <div class="route-divider">
@@ -566,7 +641,9 @@ watch(isLoggedIn, () => {
           <span class="ai-icon">✦</span>
           <span>AI规划旅程</span>
         </button>
-        <div class="manual-link" @click="showToast('手动创建功能开发中')">手动创建线路</div>
+        <div class="cta-note">
+          天数、偏好都可留空——留空按默认规则排（经典 3 天）
+        </div>
       </div>
 
       <!-- 我的行程：只在已登录且有记录时显示。
@@ -832,6 +909,12 @@ watch(isLoggedIn, () => {
               @click="toggleCompanion(c)"
             >{{ c }}</span>
           </div>
+          <!-- 把"选了会影响什么"直接说清：这是真的会改变每日选点数，
+               不写出来用户只能靠猜（也能防止有人以为只是记录偏好） -->
+          <div v-if="companionEffectText" class="pref-effect">
+            <van-icon name="info-o" size="13" color="var(--app-brand)" />
+            <span>{{ companionEffectText }}</span>
+          </div>
         </div>
 
         <div class="pref-block">
@@ -868,6 +951,9 @@ watch(isLoggedIn, () => {
         <button class="pref-done-btn" @click="showPreferences = false">完成</button>
       </div>
     </van-popup>
+
+    <!-- 使用说明（帮助中心）：常驻，任何时候都能看 -->
+    <HelpPanel v-model="showHelp" @restart-guide="restartGuide" />
   </div>
 </template>
 
@@ -1563,6 +1649,102 @@ watch(isLoggedIn, () => {
     var(--app-hairline-strong),
     var(--app-hairline) 45%,
     transparent);
+}
+
+/* 常驻帮助入口：贴在刊头右侧，不抢标题但一直可见。
+   首次引导只出现一次，评委中途进来时靠这个入口。 */
+.masthead {
+  position: relative;
+}
+.masthead-help {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px 6px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--app-hairline-strong, rgba(0, 0, 0, 0.1));
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.16s var(--app-ease-out, ease-out),
+              color 0.16s var(--app-ease-out, ease-out);
+}
+.masthead-help svg {
+  width: 14px;
+  height: 14px;
+}
+.masthead-help:hover {
+  color: var(--app-brand-hover);
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.1));
+}
+.masthead-help:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+}
+
+/* 出发地快捷选择 */
+.origin-shortcuts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 2px 10px;
+}
+.os-label {
+  font-size: 11.5px;
+  color: var(--app-text-tertiary);
+  margin-right: 2px;
+}
+.os-chip {
+  appearance: none;
+  border: 1px solid var(--app-hairline-strong, rgba(0, 0, 0, 0.1));
+  background: var(--app-bg, #f4f9f5);
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.16s var(--app-ease-out, ease-out),
+              color 0.16s var(--app-ease-out, ease-out);
+}
+.os-chip:hover,
+.os-chip:active {
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.12));
+  color: var(--app-brand-hover);
+}
+.os-chip:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+}
+
+/* 主按钮下方的一行说明：讲清"哪些可以不管" */
+.cta-note {
+  margin-top: 9px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--app-text-tertiary);
+}
+
+/* 同行伙伴选择后的真实影响提示 */
+.pref-effect {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.08));
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--app-brand-hover);
 }
 
 /* ==================== 卡片质感统一 ==================== */
