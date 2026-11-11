@@ -16,6 +16,7 @@
       >
         <span class="bt-arrow" aria-hidden="true"></span>
         <div class="bt-body">
+          <div v-if="title" class="bt-title">{{ title }}</div>
           <slot />
         </div>
         <div v-if="showClose" class="bt-foot">
@@ -35,6 +36,10 @@ const props = defineProps({
   target: { type: Function, default: null },
   /** auto | top | bottom */
   placement: { type: String, default: 'auto' },
+  /** 可选标题：加一行小衬线标题，避免小气泡看起来只是一段"黑底文字" */
+  title: { type: String, default: '' },
+  /** 目标不在视口内时是否先滚动过去（默认 true；关闭后气泡会飘在屏外） */
+  autoScroll: { type: Boolean, default: true },
   maxWidth: { type: Number, default: 260 },
   showClose: { type: Boolean, default: true },
   closeLabel: { type: String, default: '知道了' },
@@ -101,10 +106,41 @@ function placeSoon() {
 async function show() {
   open.value = true
   await nextTick()
+  // 目标可能还在首屏下方（桌面首页的叙事大图占满一屏）：
+  // 那时气泡会飘在大图上、指向屏幕外，比不弹更糟。先把目标滚进视口再定位。
+  if (props.autoScroll) await scrollTargetIntoView()
   place()
   window.addEventListener('scroll', placeSoon, true)
   window.addEventListener('resize', placeSoon)
   document.addEventListener('keydown', onKey)
+}
+
+/**
+ * 把目标滚到舒适位置（视口 38% 处）。
+ * 桌面端的滚动在 `.el-main` 容器里，所以自己找可滚动祖先，而不是 window.scrollTo。
+ */
+async function scrollTargetIntoView() {
+  const node = el()
+  if (!node) return
+  const r = node.getBoundingClientRect()
+  const vh = window.innerHeight
+  if (r.top >= 96 && r.bottom <= vh - 140) return
+
+  let scroller = null
+  let p = node.parentElement
+  while (p) {
+    const s = getComputedStyle(p)
+    if (/(auto|scroll)/.test(s.overflowY) && p.scrollHeight > p.clientHeight + 4) {
+      scroller = p
+      break
+    }
+    p = p.parentElement
+  }
+  const delta = r.top - Math.round(vh * 0.38)
+  const smooth = { behavior: 'smooth' }
+  if (scroller) scroller.scrollTo({ top: scroller.scrollTop + delta, ...smooth })
+  else window.scrollTo({ top: window.scrollY + delta, ...smooth })
+  await new Promise((res) => setTimeout(res, 340))
 }
 
 function hide() {
@@ -192,6 +228,14 @@ defineExpose({ place })
 }
 .bt-body :deep(strong) {
   font-weight: 650;
+}
+.bt-title {
+  font-family: var(--app-font-serif, 'Songti SC', serif);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #fff;
+  margin-bottom: 6px;
 }
 
 .bt-foot {

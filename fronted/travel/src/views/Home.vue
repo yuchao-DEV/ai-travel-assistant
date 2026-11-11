@@ -1003,11 +1003,12 @@ watch(isLoggedIn, () => {
     <BubbleTip
       v-model="showUploadTip"
       :target="() => importWrapEl"
-      :max-width="250"
+      :max-width="252"
+      title="上传攻略图"
       @close="closeUploadTip"
     >
       <p>
-        有攻略截图？传上来，我会把里面的地点<b>扒出来</b>，逐个去高德核对是否真实存在。
+        从攻略截图里认出地点，再逐个去高德核对是否真实存在。
       </p>
     </BubbleTip>
   </div>

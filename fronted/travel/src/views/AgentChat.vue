@@ -125,7 +125,8 @@
     <BubbleTip
       v-model="showAgentTip"
       :target="() => inputWrapEl"
-      :max-width="250"
+      :max-width="256"
+      title="一句话说需求"
       placement="top"
       @close="closeAgentTip"
     >

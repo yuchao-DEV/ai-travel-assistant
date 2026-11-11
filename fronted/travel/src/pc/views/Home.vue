@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 import ImageImportCard from '@/components/ImageImportCard.vue'
 import HelpPanel from '@/components/HelpPanel.vue'
 import BubbleTip from '@/components/BubbleTip.vue'
+import SpotlightTour from '@/components/SpotlightTour.vue'
 import { ElMessage , ElMessageBox } from 'element-plus'
 import { ChatDotRound, Picture } from '@element-plus/icons-vue'
 
@@ -30,9 +31,10 @@ const router = useRouter()
 // 好处：首屏没有网络依赖、不会闪、也不会因为某个城市没照片就整段消失。
 const formCard = ref(null)
 
-// ---- 使用说明 / 首次引导（el-tour）----
-// 桌面端用 Element Plus 自带的 Tour 做三步高亮：目的地 → 偏好 → 主按钮。
-// 移动端不用浮层（390px 会被气泡压掉半个表单），改用一条说明卡。
+// ---- 使用说明 / 首次引导（自研 SpotlightTour）----
+// 桌面端用三步聚光灯：目的地 → 偏好 → 主按钮。
+// 不用 Element 的 el-tour：默认样式与森系 + 衬线刊头不是一套语言，
+// 且它不滚 `.el-main` 这个嵌套滚动容器（要靠 scroll-into-view-options 打补丁）。
 const showHelp = ref(false)
 const tourOpen = ref(false)
 
@@ -60,17 +62,20 @@ const TOUR_STEPS = [
   {
     target: '#tour-city',
     title: '先选目的地',
-    description: '点这里挑城市，任何高德认得的城市都能规划。也可以直接点右侧的「热门目的地」卡片。',
+    desc: '点这里挑城市——任何高德认得的城市都能规划；也可以直接点右侧的热门卡片。',
+    hint: '出发地决定城际距离与驾车耗时，选填但建议填',
   },
   {
     target: '#tour-prefs',
-    title: '偏好可以全部留空',
-    description: '下面这些都不填也能出结果，按默认规则排（经典 3 天）。想调节奏就填，不填不影响。',
+    title: '偏好都可以留空',
+    desc: '兴趣、风格、同行人、节奏都不填也能出结果，按默认规则排（经典 3 天）。',
+    hint: '填了会真的改变排法：带老人会减少每日景点数',
   },
   {
     target: '#tour-plan',
-    title: '生成后能继续改',
-    description: '一次规划约 20–40 秒。生成后不满意，直接在「AI 助手」里说「太满了」「换自然向」就会重排。',
+    title: '生成后还能继续改',
+    desc: '一次规划约 20–40 秒，会真实查景点、算距离、排营业时间。',
+    hint: '不满意就去「AI 助手」说「太满了」「换自然向」，会重排一版',
   },
 ]
 
@@ -813,22 +818,11 @@ watch(isLoggedIn, () => {
 
     <!-- 首次进入的三步引导（Element Plus 自带 Tour，无新增依赖）。
          只演示一次；之后可以从「怎么用 → 重新看首页引导」再次触发。 -->
-    <el-tour
+    <SpotlightTour
       v-model="tourOpen"
-      :mask="{ color: 'rgba(20, 28, 24, 0.45)' }"
-      :scroll-into-view-options="{ block: 'center', inline: 'center' }"
-      @close="closeTour"
+      :steps="TOUR_STEPS"
       @finish="closeTour"
-    >
-      <el-tour-step
-        v-for="(s, i) in TOUR_STEPS"
-        :key="s.target"
-        :target="s.target"
-        :title="s.title"
-        :description="s.description"
-        :header-slot="false"
-      />
-    </el-tour>
+    />
 
     <!-- 使用说明（帮助中心） -->
     <HelpPanel v-model="showHelp" @restart-guide="restartGuide" />
@@ -837,11 +831,12 @@ watch(isLoggedIn, () => {
     <BubbleTip
       v-model="showUploadTip"
       :target="() => importWrapEl"
-      :max-width="280"
+      :max-width="288"
+      title="上传攻略图"
       @close="closeUploadTip"
     >
       <p>
-        有攻略截图？传上来，我会把里面的地点<b>扒出来</b>，逐个去高德核对是否真实存在。
+        从攻略截图里认出地点，再逐个去高德核对是否真实存在。
       </p>
     </BubbleTip>
     </div>
