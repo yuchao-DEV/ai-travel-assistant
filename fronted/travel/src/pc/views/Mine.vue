@@ -25,12 +25,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Clock, Cpu, DataLine, Lock, Star, Tickets } from '@element-plus/icons-vue'
 
 import { getHistoryList } from '@/api/history'
+import HelpPanel from '@/components/HelpPanel.vue'
 import { clearProfile, getProfile } from '@/api/agent'
 import { getMeta } from '@/api/travel'
 import { useAuth } from '@/composables/useAuth'
 
 const router = useRouter()
 // ---- AI 偏好画像 ----
+const showHelp = ref(false)
 const profile = ref(null)
 const profileLoading = ref(false)
 
@@ -327,10 +329,14 @@ watch(isLoggedIn, () => {
       </template>
 
       <el-divider />
-      <el-button text type="primary" @click="router.push('/agent/history')">
-        查看 AI 会话记录 ›
-      </el-button>
+      <div class="mine-links">
+        <el-button text type="primary" @click="router.push('/agent/history')">
+          查看 AI 会话记录 ›
+        </el-button>
+        <el-button text @click="showHelp = true">怎么用</el-button>
+      </div>
     </section>
+    <HelpPanel v-model="showHelp" />
   </div>
 </template>
 

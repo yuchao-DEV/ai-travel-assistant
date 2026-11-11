@@ -9,11 +9,14 @@ import { showConfirmDialog, showSuccessToast, showToast } from 'vant'
 import { getHistoryList } from '@/api/history'
 import { clearProfile, getProfile } from '@/api/agent'
 import { useAuth } from '@/composables/useAuth'
+import HelpPanel from '@/components/HelpPanel.vue'
 
 const router = useRouter()
 const { user, isLoggedIn, ensureInitialized, logout } = useAuth()
 
 const tripCount = ref(null)
+// 使用说明：常驻入口，任何页面都能找到
+const showHelp = ref(false)
 
 const nickname = computed(() => user.value?.nickname || '旅行爱好者')
 // 账号密码方案下 UserVO 里**没有 phone 字段**（改用 username）。
@@ -211,6 +214,15 @@ watch(isLoggedIn, () => {
         </template>
       </div>
 
+      <!-- 使用说明：常驻，不放在首页也能看到 -->
+      <div class="card help-card" @click="showHelp = true">
+        <div class="help-row">
+          <van-icon name="question-o" size="18" color="var(--app-brand)" />
+          <span class="help-text">怎么用</span>
+          <van-icon name="arrow" size="14" color="var(--app-text-tertiary)" />
+        </div>
+      </div>
+
       <!-- 退出登录 -->
       <div v-if="isLoggedIn" class="card logout-card">
         <van-button block plain type="danger" round @click="onLogout">退出登录</van-button>
@@ -222,6 +234,7 @@ watch(isLoggedIn, () => {
         <div class="about-desc">基于 AI 的智能景点介绍与行程规划系统</div>
       </div>
     </div>
+    <HelpPanel v-model="showHelp" />
   </div>
 </template>
 
@@ -395,4 +408,19 @@ watch(isLoggedIn, () => {
 
 /* 老样式不再使用，留着会继续渲染成深绿大卡 */
 .profile-card, .profile-info, .nickname { display: none !important; }
+.help-card {
+  padding: 4px 16px;
+}
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 0;
+  cursor: pointer;
+}
+.help-text {
+  flex: 1;
+  font-size: 14px;
+  color: var(--app-text);
+}
 </style>
