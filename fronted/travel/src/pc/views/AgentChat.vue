@@ -102,6 +102,21 @@
             共 {{ (itinerary.plan || []).length }} 天 · {{ (itinerary.plan || []).reduce((n, d) => n + (d.items || []).length, 0) }} 个安排
           </div>
           <el-button text type="primary" @click="openTimeline">在时间线中查看 ›</el-button>
+
+          <!-- 结果闭环：这些说法真的会被解析成参数调整并重排一版 -->
+          <div class="pa-adjust">
+            <div class="pa-adjust-title">不满意可以直接说</div>
+            <div class="pa-adjust-chips">
+              <button
+                v-for="s in adjustExamples"
+                :key="s"
+                type="button"
+                class="pa-adjust-chip"
+                :disabled="running"
+                @click="quickAdjust(s)"
+              >{{ s }}</button>
+            </div>
+          </div>
         </template>
         <div v-else class="pa-card-empty">还没有生成行程</div>
       </div>
@@ -181,6 +196,22 @@ async function onSend() {
 function retry() {
   if (!lastMessage.value) return
   send(lastMessage.value, historyForApi.value)
+}
+
+/**
+ * 生成行程后的「不满意怎么改」快捷语。
+ * 每一条都真的会被解析成参数调整并重排一版（太满 → 宽松节奏；换自然向 → tags）。
+ */
+const adjustExamples = ['太满了', '换成自然向', '别排这么紧', '加一天']
+
+async function quickAdjust(text) {
+  if (running.value) return
+  if (lastMessage.value) {
+    history.value.push({ role: 'user', content: lastMessage.value })
+    if (answer.value) history.value.push({ role: 'assistant', content: answer.value })
+  }
+  lastMessage.value = text
+  await send(text, historyForApi.value)
 }
 
 // ---- 从「AI 会话记录」继续对话 ----
@@ -380,4 +411,45 @@ function openTimeline() {
 .pa-itin-note { margin-top: 8px; font-size: 11.5px; color: var(--app-text-tertiary); line-height: 1.7; }
 .pa-profile { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--app-text-secondary); line-height: 1.9; }
 .pa-tip { margin-top: 8px; font-size: 11.5px; color: var(--app-warning); background: var(--app-warning-soft); border-radius: 6px; padding: 6px 8px; }
+
+/* 结果闭环：生成行程后告诉用户"可以接着说" */
+.pa-adjust {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 10px;
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.08));
+  border: 1px solid var(--app-hairline);
+}
+.pa-adjust-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--app-brand-hover);
+  margin-bottom: 8px;
+}
+.pa-adjust-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pa-adjust-chip {
+  appearance: none;
+  border: 1px solid var(--app-hairline-strong, rgba(0, 0, 0, 0.1));
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.16s var(--app-ease-out, ease-out);
+}
+.pa-adjust-chip:hover:not(:disabled) {
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.12));
+  color: var(--app-brand-hover);
+}
+.pa-adjust-chip:disabled { opacity: 0.5; cursor: default; }
+.pa-adjust-chip:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+}
 </style>

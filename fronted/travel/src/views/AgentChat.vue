@@ -42,6 +42,22 @@
           </div>
           <div class="ic-more">查看完整行程 ›</div>
         </div>
+
+        <!-- 结果闭环：告诉用户"不满意怎么继续"。
+             这不是装饰文案——这些说法真的会被解析成参数调整并重排一版。 -->
+        <div v-if="itinerary" class="result-hint">
+          <span class="rh-title">不满意可以直接说</span>
+          <div class="rh-examples">
+            <button
+              v-for="s in adjustExamples"
+              :key="s"
+              type="button"
+              class="rh-chip"
+              :disabled="running"
+              @click="quickAdjust(s)"
+            >{{ s }}</button>
+          </div>
+        </div>
       </div>
 
       <!-- 空状态：不能只有两行字。
@@ -143,6 +159,28 @@ async function useExample(text) {
   if (running.value) return
   draft.value = text
   await onSend()
+}
+
+/**
+ * 生成行程后的「不满意怎么改」快捷语。
+ *
+ * 每一条都是**真的会被解析并重新排一版**的说法：
+ *   - 「太满了」        → 走 pace=宽松 / 减少每日选点
+ *   - 「换成自然向」    → 走 tags=[自然] 重排
+ *   - 「别排这么紧」    → 同上，慢节奏
+ *   - 「加一天」        → 改 days
+ * 写在这里是为了让用户知道系统支持"用嘴改"，而不是只能从头再填一遍表单。
+ */
+const adjustExamples = ['太满了', '换成自然向', '别排这么紧', '加一天']
+
+async function quickAdjust(text) {
+  if (running.value) return
+  if (lastMessage.value) {
+    history.value.push({ role: 'user', content: lastMessage.value })
+    if (answer.value) history.value.push({ role: 'assistant', content: answer.value })
+  }
+  lastMessage.value = text
+  await send(text, historyForApi.value)
 }
 
 // 多轮上下文：只带最近的对话，避免 system 之外的 token 无限增长
@@ -358,6 +396,50 @@ function openItinerary() {
   box-shadow: var(--app-elev-2);
 }
 .example-chip:disabled { opacity: 0.5; cursor: default; }
+
+/* 结果闭环提示：生成行程后告诉用户"可以接着说" */
+.result-hint {
+  margin-top: 4px;
+  padding: 12px 13px;
+  border-radius: var(--app-radius-md);
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.08));
+  border: 1px solid var(--app-hairline);
+}
+.rh-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--app-brand-hover);
+  margin-bottom: 9px;
+}
+.rh-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.rh-chip {
+  appearance: none;
+  border: 1px solid var(--app-hairline-strong, rgba(0, 0, 0, 0.1));
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background var(--app-dur-fast, 0.16s) var(--app-ease-out, ease-out),
+              color var(--app-dur-fast, 0.16s) var(--app-ease-out, ease-out);
+}
+.rh-chip:active:not(:disabled) {
+  transform: scale(var(--app-press-scale, 0.97));
+  background: var(--app-brand-soft, rgba(66, 127, 98, 0.12));
+  color: var(--app-brand-hover);
+}
+.rh-chip:disabled { opacity: 0.5; cursor: default; }
+.rh-chip:focus-visible {
+  outline: 2px solid var(--app-brand);
+  outline-offset: 2px;
+}
 
 /* 能力说明：让人知道这套系统到底做了什么，而不是"AI 什么都行" */
 .empty-abilities {
