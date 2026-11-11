@@ -8,6 +8,9 @@ import { readAgentTrip, clearAgentTrip } from '@/utils/agentTrip'
 import { useAuth } from '@/composables/useAuth'
 import { loadLocalTrips, saveLocalTrip } from '@/utils/localTrips'
 import { loadAmap, AMAP_VISUAL_ID } from '@/composables/useAmap'
+import EmptyState from '@/components/EmptyState.vue'
+import HelpPanel from '@/components/HelpPanel.vue'
+import { describeError } from '@/utils/errorText'
 import InspirationCards from '@/components/InspirationCards.vue'
 import StorySection from '@/components/StorySection.vue'
 
@@ -84,12 +87,65 @@ const tripId = ref(route.query.trip_id || '')
 const loading = ref(false)
 const isError = ref(false)
 const errorMsg = ref('')
+// 原始错误对象：交给 describeError 翻译成"用户能行动"的文案。
+// 只留 errorMsg 字符串会丢失 code/status，没法判断该说"去登录"还是"重试"。
+const errorRaw = ref(null)
+const showHelp = ref(false)
 const itinerary = ref(null)
 const activeTab = ref('details')
 const activeDayIndex = ref(-1)
 const editingTitle = ref(false)
 const tripTitle = ref('')
 const chatInput = ref('')
+
+// ---- 错误态：翻译成用户能行动的文案 ----
+const errorInfo = computed(() =>
+  describeError(errorRaw.value, { context: historyId.value ? 'history' : 'plan' })
+)
+
+function onErrorAction() {
+  const action = errorInfo.value.action
+  if (action === 'login') {
+    router.push({ path: '/login', query: { redirect: route.fullPath } })
+    return
+  }
+  if (action === 'home') {
+    router.push('/')
+    return
+  }
+  if (action === 'help') {
+    showHelp.value = true
+    return
+  }
+  // retry 或未知：重新走一遍规划
+  replan()
+}
+
+// ---- 载入态：把 20–40 秒的等待讲成阶段，而不是一个"选点·聚类·路线优化"的静态串 ----
+// 这些阶段在引擎里真实存在（候选筛选 → KMeans 分天 → 时间容量选点 → 路径优化 → 时间排程）。
+const LOADING_STAGES = [
+  '正在查询真实景点与营业时间…',
+  '正在按地理聚类分天…',
+  '正在按时间容量挑点…',
+  '正在优化当天路线顺序…',
+  '正在排时间窗与用餐时段…',
+]
+const loadingStageIndex = ref(0)
+const loadingStage = computed(() => LOADING_STAGES[loadingStageIndex.value] || LOADING_STAGES[0])
+let loadingTimer = null
+
+watch(loading, (on) => {
+  if (loadingTimer) {
+    clearInterval(loadingTimer)
+    loadingTimer = null
+  }
+  if (!on) return
+  loadingStageIndex.value = 0
+  // 3.4 秒推进一档：规划通常 20–40 秒，正好走完 5 档
+  loadingTimer = setInterval(() => {
+    if (loadingStageIndex.value < LOADING_STAGES.length - 1) loadingStageIndex.value += 1
+  }, 3400)
+}, { immediate: true })
 
 const typeLabel = (type) => ({spot:'景点',restaurant:'餐饮',hotel:'住宿'})[type] || type || '景点'
 const typeColor = (type) => ({spot:'var(--app-brand)',restaurant:'var(--app-danger)',hotel:'var(--app-accent)'})[type] || 'var(--app-brand)'
@@ -491,6 +547,7 @@ const fetchPlan = async () => {
   loading.value = true
   isError.value = false
   errorMsg.value = ''
+  errorRaw.value = null
   // 先确认登录态：回看历史行程需要登录
   await ensureInitialized()
   // 助手直接跳转过来的：用那份行程渲染，跳过算法重排
@@ -510,18 +567,16 @@ const fetchPlan = async () => {
       itinerary.value = res.data
     } else {
       isError.value = true
+      errorRaw.value = res
       errorMsg.value = (res && res.message) || '生成行程失败'
     }
     if (itinerary.value) await persistTrip()
   } catch (error) {
     isError.value = true
-    if (historyId.value && (error.code === 401 || error.status === 401)) {
-      errorMsg.value = '登录后才能查看这条历史行程'
-    } else if (error.isNetworkError === false && error.message) {
-      errorMsg.value = error.message
-    } else {
-      errorMsg.value = '网络异常，请确认后端服务已启动'
-    }
+    // 保留原始错误：具体该说「去登录」还是「重试」由 describeError 判断。
+    // 这里不再拼「网络异常，请确认后端服务已启动」——那是给开发看的话。
+    errorRaw.value = error
+    errorMsg.value = error?.response?.data?.message || error?.message || '生成行程失败'
     console.error('行程规划请求失败:', error)
   } finally {
     loading.value = false
@@ -951,7 +1006,7 @@ onBeforeUnmount(() => {
     <div v-if="loading" class="loading-box">
       <div class="loading-head">
         <van-loading size="22" color="var(--app-brand)">算法引擎正在为你规划行程</van-loading>
-        <p class="loading-tip">选点 · 聚类 · 路线优化 · 时间排程</p>
+        <p class="loading-tip">{{ loadingStage }}</p>
         <p class="loading-hint">生成需要一点时间，先看看 {{ query.city }} 值得去的地方</p>
       </div>
 
@@ -985,13 +1040,18 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <!-- 错误态 -->
+    <!-- 错误态：由 errorText.describeError 统一翻译成"用户能行动"的话，
+         不再直接显示「网络异常，请确认后端服务已启动」这种开发者文案。 -->
     <div v-else-if="isError" class="error-box">
-      <van-empty image="error" :description="errorMsg" />
-      <van-button v-if="historyId && !isLoggedIn" type="primary" round @click="router.push('/login')">
-        去登录
-      </van-button>
-      <van-button v-else type="primary" round @click="replan">重新加载</van-button>
+      <EmptyState
+        :title="errorInfo.title"
+        :desc="errorInfo.desc"
+        :tone="errorInfo.tone"
+        :action-label="errorInfo.actionLabel"
+        secondary-label="看使用说明"
+        @action="onErrorAction"
+        @secondary="showHelp = true"
+      />
     </div>
 
     <!-- 行程详情 -->
@@ -1004,8 +1064,6 @@ onBeforeUnmount(() => {
           <div v-for="pill in dayPills" :key="pill.index" class="date-pill" :class="{active:activeDayIndex===pill.index}" @click="selectDay(pill.index)">
             {{ pill.label }}
           </div>
-          <div class="date-pill" :class="{active:activeDayIndex===-2}" @click="selectDay(-2)">待安排</div>
-          <div class="date-pill add-pill" @click="showToast('添加日期')"><van-icon name="plus" size="14" color="var(--app-text-secondary)" /></div>
         </div>
       </div>
 
@@ -1067,23 +1125,6 @@ onBeforeUnmount(() => {
                  `day.daily_cost` 已随预算系统删除。显示 0 元等于声称
                  "这天不用花钱"，那是在编造。 -->
             <van-icon name="delete-o" size="16" color="var(--app-text-tertiary)" @click.stop="showToast('删除该天')" />
-          </div>
-        </div>
-      </div>
-
-      <!-- 待安排 -->
-      <div v-else-if="activeDayIndex===-2" class="unscheduled-section">
-        <div class="unscheduled-header">
-          <span class="unscheduled-title">待安排</span>
-          <span class="one-click-plan" @click="showToast('一键规划')">
-            <van-icon name="star-o" size="14" color="var(--app-brand)" />一键规划
-          </span>
-        </div>
-        <div class="empty-unscheduled">
-          <div class="empty-illustration"></div>
-          <p class="empty-text">暂无待安排地点</p>
-          <div class="add-unscheduled" @click="showToast('添加待安排的地点')">
-            <van-icon name="add-o" size="14" color="var(--app-brand)" /><span>添加待安排的地点</span>
           </div>
         </div>
       </div>
@@ -1239,6 +1280,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="chat-add" @click="showToast('添加内容')"><van-icon name="plus" size="18" color="var(--app-brand)" /></div>
     </div>
+    <HelpPanel v-model="showHelp" />
   </div>
 </template>
 

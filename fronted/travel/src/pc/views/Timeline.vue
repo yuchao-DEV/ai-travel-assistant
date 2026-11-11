@@ -22,6 +22,9 @@ import { loadAmap, AMAP_VISUAL_ID } from '@/composables/useAmap'
 import { saveLocalTrip } from '@/utils/localTrips'
 import InspirationCards from '@/components/InspirationCards.vue'
 import StorySection from '@/components/StorySection.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import HelpPanel from '@/components/HelpPanel.vue'
+import { describeError } from '@/utils/errorText'
 
 const route = useRoute()
 const router = useRouter()
@@ -49,6 +52,52 @@ const itinerary = ref(null)
 const tripTitle = ref('')
 const loading = ref(false)
 const errorMsg = ref('')
+// 原始错误：describeError 需要 code/status 才能判断该说"去登录"还是"重试"
+const errorRaw = ref(null)
+const showHelp = ref(false)
+const errorInfo = computed(() =>
+  describeError(errorRaw.value, { context: historyId.value ? 'history' : 'plan' })
+)
+
+function onErrorAction() {
+  const action = errorInfo.value.action
+  if (action === 'login') {
+    router.push({ path: '/login', query: { redirect: route.fullPath } })
+    return
+  }
+  if (action === 'home') {
+    router.push('/')
+    return
+  }
+  if (action === 'help') {
+    showHelp.value = true
+    return
+  }
+  fetchPlan()
+}
+
+// 载入态阶段叙事：这些阶段在引擎里真实存在
+const LOADING_STAGES = [
+  '正在查询真实景点与营业时间…',
+  '正在按地理聚类分天…',
+  '正在按时间容量挑点…',
+  '正在优化当天路线顺序…',
+  '正在排时间窗与用餐时段…',
+]
+const loadingStageIndex = ref(0)
+const loadingStage = computed(() => LOADING_STAGES[loadingStageIndex.value] || LOADING_STAGES[0])
+let loadingTimer = null
+watch(loading, (on) => {
+  if (loadingTimer) {
+    clearInterval(loadingTimer)
+    loadingTimer = null
+  }
+  if (!on) return
+  loadingStageIndex.value = 0
+  loadingTimer = setInterval(() => {
+    if (loadingStageIndex.value < LOADING_STAGES.length - 1) loadingStageIndex.value += 1
+  }, 3400)
+}, { immediate: true })
 // -1 表示"全部天"
 const activeDay = ref(-1)
 const savedToAccount = ref(false)
@@ -435,6 +484,7 @@ const replan = async () => {
 async function fetchPlan() {
   loading.value = true
   errorMsg.value = ''
+  errorRaw.value = null
   savedToAccount.value = false
   await ensureInitialized()
   try {
@@ -445,20 +495,23 @@ async function fetchPlan() {
       await fetchFromHistory()
     } else if (!query.city) {
       // 没有目的地就不要发请求：以前会退回到硬编码的城市，静默给出错误城市的行程
+      errorRaw.value = { code: 400, message: '还没有选目的地' }
       errorMsg.value = '缺少目的地，请回首页选择目的地后再规划'
       return
     } else {
       const res = await getPlan(query)
       if (res && res.code === 200 && res.data) itinerary.value = res.data
       else if (res && res.data) itinerary.value = res.data
-      else errorMsg.value = (res && res.message) || '生成行程失败'
+      else {
+        errorRaw.value = res
+        errorMsg.value = (res && res.message) || '生成行程失败'
+      }
       if (itinerary.value) await persistTrip()
     }
   } catch (error) {
-    errorMsg.value =
-      historyId.value && (error.code === 401 || error.status === 401)
-        ? '登录后才能查看这条历史行程'
-        : error.message || '网络异常，请确认后端服务已启动'
+    // 原始错误交给 describeError 决定文案与可用操作（去登录 / 重试 / 回首页）
+    errorRaw.value = error
+    errorMsg.value = error?.response?.data?.message || error?.message || '生成行程失败'
     console.error('行程规划请求失败:', error)
   } finally {
     loading.value = false
@@ -521,7 +574,7 @@ watch(panelTab, async (tab) => {
       <div v-if="loading" class="panel-loading">
         <el-skeleton :rows="4" animated />
         <div class="pc-muted" style="margin-top: 14px; text-align: center">
-          算法引擎规划中：选点 · 聚类 · 路径优化 · 时间排程
+          {{ loadingStage }}
         </div>
         <div class="pc-muted" style="margin-top: 6px; text-align: center">
           生成需要一点时间，先看看 {{ effectiveCity || '目的地' }} 值得去的地方
@@ -537,9 +590,18 @@ watch(panelTab, async (tab) => {
         />
       </div>
 
-      <el-empty v-else-if="errorMsg" :description="errorMsg">
-        <el-button type="primary" @click="fetchPlan">重新加载</el-button>
-      </el-empty>
+      <!-- 错误态：文案由 describeError 翻译成用户能行动的话 -->
+      <div v-else-if="errorMsg" class="panel-error">
+        <EmptyState
+          :title="errorInfo.title"
+          :desc="errorInfo.desc"
+          :tone="errorInfo.tone"
+          :action-label="errorInfo.actionLabel"
+          secondary-label="看使用说明"
+          @action="onErrorAction"
+          @secondary="showHelp = true"
+        />
+      </div>
 
       <template v-else-if="itinerary">
         <div class="trip-header">
@@ -723,6 +785,8 @@ watch(panelTab, async (tab) => {
         show-icon
       />
     </section>
+
+    <HelpPanel v-model="showHelp" />
   </div>
 </template>
 
